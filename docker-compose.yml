@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  trading-brain:
+    build: .
+    container_name: trading-brain
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - trading-data:/data          # SQLite DB + Vibe-Trading runtime
+    environment:
+      # ── LLM (default: Groq — free tier) ──────────────────────────────────
+      - LLM_PROVIDER=${LLM_PROVIDER:-groq}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - DEEP_THINK_LLM=${DEEP_THINK_LLM:-llama-3.3-70b-versatile}
+      - QUICK_THINK_LLM=${QUICK_THINK_LLM:-llama-3.1-8b-instant}
+
+      # ── Robinhood / Vibe-Trading ──────────────────────────────────────────
+      - ROBINHOOD_MCP_URL=${ROBINHOOD_MCP_URL:-http://robinhood-mcp:8765}
+      - VIBE_TRADING_RUNTIME_ROOT=/data/vibe-runtime
+      - VIBE_TRADING_API_KEY=${VIBE_TRADING_API_KEY}
+
+      # ── Mandate ───────────────────────────────────────────────────────────
+      - MANDATE_ALLOWED_SYMBOLS=${MANDATE_ALLOWED_SYMBOLS:-AAPL,MSFT,GOOGL}
+      - MANDATE_MAX_ORDER_USD=${MANDATE_MAX_ORDER_USD:-500}
+      - MANDATE_DAILY_CAP_USD=${MANDATE_DAILY_CAP_USD:-2000}
+      - MANDATE_MAX_EXPOSURE_USD=${MANDATE_MAX_EXPOSURE_USD:-10000}
+      - MANDATE_MAX_TRADES_PER_DAY=${MANDATE_MAX_TRADES_PER_DAY:-5}
+
+      # ── Scheduler ─────────────────────────────────────────────────────────
+      - LOOP_INTERVAL_MINUTES=${LOOP_INTERVAL_MINUTES:-60}
+
+      # ── Notifications ─────────────────────────────────────────────────────
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+
+      # ── App ───────────────────────────────────────────────────────────────
+      - DRY_RUN=${DRY_RUN:-true}
+      - DEBUG=${DEBUG:-false}
+      - DATABASE_PATH=/data/trading_audit.db
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  trading-data:
+    driver: local

@@ -1,0 +1,33 @@
+# Core API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+
+# Scheduler
+APScheduler>=3.10.4
+
+# HTTP client (notifications)
+httpx>=0.28.0
+
+# TradingAgents (installed from source in Dockerfile)
+# tradingagents  ← git clone + pip install
+
+# LangChain (pulled in by tradingagents, pinned for reproducibility)
+langchain-core>=0.3.81
+langchain-groq>=0.2.3          # FREE default provider — console.groq.com
+langchain-openai>=0.3.23       # optional
+langchain-anthropic>=0.3.15    # optional
+langchain-google-genai>=4.0.0  # optional free fallback
+langgraph>=0.4.8
+langgraph-checkpoint-sqlite>=2.0.0
+
+# Market data
+yfinance>=0.2.54
+pandas>=2.2.0
+
+# Vibe-Trading SDK deps (installed from source in Dockerfile)
+# vibe-trading  ← git clone + pip install
+
+# Utilities
+python-dotenv>=1.0.1
