@@ -80,7 +80,9 @@ def notify_trade(
     volume: Optional[int] = None,
     # Analyst highlights
     analyst_reports: Optional[dict] = None,
+    asset_type: str = "stock",
 ) -> None:
+    asset_emoji = {"stock": "📈", "option": "⚙️", "crypto": "₿", "prediction": "🎯"}.get(asset_type, "📈")
     side_emoji = "🟢" if side == "buy" else "🔴"
     status_emoji = {"submitted": "✅", "blocked": "🚫", "dry_run": "🧪", "error": "❌"}.get(status, "⚠️")
 
@@ -106,7 +108,7 @@ def notify_trade(
                 analyst_lines += f"\n  • *{name.title()}*: {first_line}"
 
     msg = (
-        f"{side_emoji} *{ticker}* — {side.upper()} {status_emoji}{status.upper()}\n"
+        f"{side_emoji} {asset_emoji} *{ticker}* — {side.upper()} {status_emoji}{status.upper()}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💰 *Price:* {price_str} ({change_str})   📊 *Vol:* {vol_str}\n"
         f"📋 *Rating:* {rating}   🎯 *Confidence:* {conf_str}\n"

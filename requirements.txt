@@ -29,6 +29,10 @@ pandas>=2.2.0
 # Market scanning (Polygon.io — free tier at polygon.io)
 # httpx already handles all Polygon API calls — no extra SDK needed
 
+# Live research & memory
+tavily-python>=0.3.0          # real-time search — free at app.tavily.com
+mem0ai>=0.1.0                 # persistent agent memory — free at app.mem0.ai
+
 # Vibe-Trading SDK deps (installed from source in Dockerfile)
 # vibe-trading  ← git clone + pip install
 

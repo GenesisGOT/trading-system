@@ -82,11 +82,12 @@ class BrokerConnector:
     # ── Our own mandate pre-check (runs BEFORE Vibe-Trading's checks) ───────
 
     def _local_mandate_check(
-        self, ticker: str, side: str, quantity: float, notional_usd: Optional[float]
+        self, ticker: str, side: str, quantity: float, notional_usd: Optional[float],
+        asset_type: str = "stock",
     ) -> Optional[str]:
         """Return a block reason string, or None if the order passes local checks."""
-        # Symbol allowlist
-        if ticker.upper() not in [s.upper() for s in settings.allowed_symbols]:
+        # Symbol allowlist only applies to stocks (crypto/options/predictions use scanner lists)
+        if asset_type == "stock" and ticker.upper() not in [s.upper() for s in settings.allowed_symbols]:
             return f"{ticker} not in allowed symbols: {settings.allowed_symbols}"
 
         # Per-order cap
@@ -115,16 +116,17 @@ class BrokerConnector:
         side: str,
         quantity: float,
         notional_usd: Optional[float] = None,
+        asset_type: str = "stock",
     ) -> OrderResult:
         ticker = ticker.upper()
         side = side.lower()
 
         if settings.dry_run:
-            log.info("[DRY RUN] Would %s %s qty=%s notional=$%s", side, ticker, quantity, notional_usd)
+            log.info("[DRY RUN] Would %s %s (%s) qty=%s notional=$%s", side, ticker, asset_type, quantity, notional_usd)
             return OrderResult(status="dry_run", order_id=None, block_reason=None, broker_response=None)
 
-        # Local mandate pre-check
-        block = self._local_mandate_check(ticker, side, quantity, notional_usd)
+        # Local mandate pre-check (skip allowlist for crypto/options/prediction — scanner handles filtering)
+        block = self._local_mandate_check(ticker, side, quantity, notional_usd, asset_type)
         if block:
             log.warning("Local mandate blocked %s %s: %s", side, ticker, block)
             return OrderResult(status="blocked", order_id=None, block_reason=block, broker_response=None)

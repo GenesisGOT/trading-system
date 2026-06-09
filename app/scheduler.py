@@ -1,11 +1,11 @@
-"""Background scheduler — full market scan → multi-agent analysis → validate → execute.
+"""Background scheduler — full market scan → LangGraph multi-agent analysis → execute.
 
 Each cycle:
-  1. Polygon.io scanner finds top movers across the entire US market
-  2. TradingAgents runs 5 analysts + Bull/Bear debate + Fund Manager for each ticker
-  3. Devil's Advocate validator stress-tests every BUY/SELL before execution
-  4. Vibe-Trading + Robinhood MCP executes approved orders
-  5. Rich Telegram/Discord notification with full thesis + reasoning
+  1. Scanner finds top stocks + crypto + options + prediction markets
+  2. LangGraph runs 5 parallel analysts → Bull/Bear debate (with re-debate loop) →
+     Fund Manager → Validator for each symbol
+  3. Approved orders are sized and sent to Robinhood via broker connector
+  4. Telegram/Discord rich notification with full thesis + reasoning
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import asyncio
 import logging
 import uuid
 from datetime import date
-from typing import Optional
+from typing import Optional, Tuple
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -42,36 +42,33 @@ _scheduler: Optional[AsyncIOScheduler] = None
 _halted: bool = False
 
 
-# ── Order sizing ─────────────────────────────────────────────────────────────
+# ── Order sizing ──────────────────────────────────────────────────────────────
 
-def _size_order(action: str, current_price: Optional[float]) -> tuple[float, Optional[float]]:
+def _size_order(action: str, asset_type: str, current_price: Optional[float]) -> tuple[float, Optional[float]]:
     notional = settings.mandate_max_order_usd
     if notional >= 999_999:
-        # Unlimited mode — use account balance (Robinhood enforces the real cap)
-        notional = None
+        notional = None  # unlimited — broker enforces the real cap
     return 0.0, notional
 
 
 # ── Per-symbol pipeline ───────────────────────────────────────────────────────
 
-async def _process_symbol(run_id: str, ticker: str) -> None:
+async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
     if _halted or broker.is_halted():
         log.info("[%s] Skipping — halted", ticker)
         return
 
-    log.info("[%s] Starting analysis run_id=%s", ticker, run_id)
+    log.info("[%s] Starting LangGraph analysis run_id=%s asset_type=%s", ticker, run_id, asset_type)
 
-    # ── 1. Run TradingAgents (blocking → thread) ──────────────────────────
+    analysis_date = settings.analysis_date_override or date.today().isoformat()
+
+    # ── 1. Run LangGraph pipeline ─────────────────────────────────────────
     try:
-        from app.agents.runner import run_analysis
-        result = await asyncio.to_thread(
-            run_analysis,
-            ticker,
-            settings.analysis_date_override or date.today().isoformat(),
-        )
+        from app.agents.graph import run_graph
+        result = await asyncio.to_thread(run_graph, ticker, asset_type, analysis_date)
     except Exception as exc:
-        log.error("[%s] Agent analysis failed: %s", ticker, exc, exc_info=True)
-        log_system_event("error", f"{ticker}: agent failed — {exc}")
+        log.error("[%s] Graph analysis failed: %s", ticker, exc, exc_info=True)
+        log_system_event("error", f"{ticker}: graph failed — {exc}")
         notify_error(ticker, str(exc))
         return
 
@@ -79,74 +76,66 @@ async def _process_symbol(run_id: str, ticker: str) -> None:
     decision_id = log_decision(
         run_id=run_id,
         ticker=ticker,
-        analysis_date=settings.analysis_date_override or date.today().isoformat(),
+        analysis_date=analysis_date,
         rating=result.rating,
         action=result.action,
         confidence=result.confidence,
-        summary=result.summary,
+        summary=result.investment_thesis[:200],
         investment_thesis=result.investment_thesis,
         price_target=result.price_target,
         time_horizon=result.time_horizon,
         raw_state=result.raw_state,
     )
     for analyst, report in result.analyst_reports.items():
-        log_analyst_report(decision_id, analyst, report)
+        if report:
+            log_analyst_report(decision_id, analyst, report)
 
-    # ── 3. Get market context for notification ────────────────────────────
-    market_ctx = {}
+    # ── 3. Store decision in Mem0 for future cycles ───────────────────────
     try:
-        from app.scanner import get_ticker_context
-        market_ctx = get_ticker_context(ticker)
+        from app.agents.tools.memory import store_decision
+        store_decision(ticker, result.action, result.confidence, result.investment_thesis)
     except Exception:
         pass
 
-    # ── 4. HOLD — notify and skip ─────────────────────────────────────────
+    # ── 4. Get market context for notification ────────────────────────────
+    market_ctx = {}
+    if asset_type == "stock":
+        try:
+            from app.scanner import get_ticker_context
+            market_ctx = get_ticker_context(ticker)
+        except Exception:
+            pass
+
+    # ── 5. HOLD — notify and skip ─────────────────────────────────────────
     if result.action == "HOLD":
         log.info("[%s] HOLD — no trade", ticker)
         notify_hold(ticker, result.rating, result.confidence, result.investment_thesis)
         return
 
-    # ── 5. Validator stress-test ──────────────────────────────────────────
-    try:
-        from app.agents.validator import validate_decision
-        validation = await asyncio.to_thread(
-            validate_decision,
-            ticker,
-            result.action,
-            result.rating,
-            result.investment_thesis,
-            result.analyst_reports,
-        )
-    except Exception as exc:
-        log.error("[%s] Validator failed: %s", ticker, exc)
-        from app.agents.validator import ValidationResult
-        validation = ValidationResult(
-            confidence=0.5, proceed=True,
-            risk_summary=f"Validator error: {exc}", validation_notes="",
-        )
-
-    if not validation.proceed:
-        log.warning("[%s] Validator blocked trade: confidence=%.2f", ticker, validation.confidence)
+    # ── 6. Validator already ran inside the graph — check result ─────────
+    if not result.validation_proceed:
+        log.warning("[%s] Validator blocked: confidence=%.2f", ticker, result.validation_confidence)
         log_execution(
             decision_id=decision_id, ticker=ticker, side=result.action.lower(),
             quantity=0, notional_usd=None, order_id=None,
-            status="blocked", block_reason=f"Validator: confidence={validation.confidence:.2f} — {validation.risk_summary}",
+            status="blocked",
+            block_reason=f"Validator: {result.validation_confidence:.0%} — {result.risk_summary}",
             broker_response=None,
         )
         notify_trade(
             ticker=ticker, side=result.action.lower(), quantity=0, notional=None,
             status="blocked", order_id=None,
-            block_reason=f"Low confidence ({validation.confidence:.0%}) — {validation.risk_summary}",
+            block_reason=f"Low confidence ({result.validation_confidence:.0%}) — {result.risk_summary}",
             rating=result.rating, confidence=result.confidence,
             investment_thesis=result.investment_thesis,
             price_target=result.price_target, time_horizon=result.time_horizon,
-            risk_summary=validation.risk_summary, analyst_reports=result.analyst_reports,
+            risk_summary=result.risk_summary, analyst_reports=result.analyst_reports,
             current_price=market_ctx.get("price"), change_pct=market_ctx.get("change_pct"),
-            volume=market_ctx.get("volume"),
+            volume=market_ctx.get("volume"), asset_type=asset_type,
         )
         return
 
-    # ── 6. Daily cap check ────────────────────────────────────────────────
+    # ── 7. Daily cap check ────────────────────────────────────────────────
     daily = get_daily_trade_count()
     if settings.mandate_max_trades_per_day < 999 and daily >= settings.mandate_max_trades_per_day:
         reason = f"Daily cap reached ({daily}/{settings.mandate_max_trades_per_day})"
@@ -158,11 +147,11 @@ async def _process_symbol(run_id: str, ticker: str) -> None:
         )
         return
 
-    # ── 7. Execute ────────────────────────────────────────────────────────
+    # ── 8. Execute ────────────────────────────────────────────────────────
     side = result.action.lower()
-    quantity, notional = _size_order(result.action, market_ctx.get("price"))
+    quantity, notional = _size_order(result.action, asset_type, market_ctx.get("price"))
 
-    order = broker.place_order(ticker, side, quantity, notional)
+    order = broker.place_order(ticker, side, quantity, notional, asset_type=asset_type)
     log.info("[%s] Broker: status=%s order_id=%s", ticker, order.status, order.order_id)
 
     log_execution(
@@ -176,12 +165,12 @@ async def _process_symbol(run_id: str, ticker: str) -> None:
         ticker=ticker, side=side, quantity=quantity, notional=notional,
         status=order.status, order_id=order.order_id,
         block_reason=order.block_reason,
-        rating=result.rating, confidence=validation.confidence,
+        rating=result.rating, confidence=result.validation_confidence,
         investment_thesis=result.investment_thesis,
         price_target=result.price_target, time_horizon=result.time_horizon,
-        risk_summary=validation.risk_summary, analyst_reports=result.analyst_reports,
+        risk_summary=result.risk_summary, analyst_reports=result.analyst_reports,
         current_price=market_ctx.get("price"), change_pct=market_ctx.get("change_pct"),
-        volume=market_ctx.get("volume"),
+        volume=market_ctx.get("volume"), asset_type=asset_type,
     )
 
 
@@ -196,20 +185,19 @@ async def _run_loop() -> None:
     log.info("=== Loop start run_id=%s ===", run_id)
     log_system_event("loop_start", f"run_id={run_id}")
 
-    # Scan full market to discover tickers
     try:
         from app.scanner import scan_market
-        tickers = await asyncio.to_thread(scan_market)
+        symbols = await asyncio.to_thread(scan_market)
     except Exception as exc:
         log.error("Scanner failed: %s — falling back to config symbols", exc)
-        tickers = settings.allowed_symbols
+        symbols = [(s, "stock") for s in settings.allowed_symbols]
 
-    log.info("Analyzing %d tickers: %s", len(tickers), tickers)
-    notify_scan_start(tickers)
+    log.info("Analyzing %d symbols: %s", len(symbols), symbols)
+    notify_scan_start([f"{t}({a})" for t, a in symbols])
 
-    for ticker in tickers:
+    for ticker, asset_type in symbols:
         try:
-            await _process_symbol(run_id, ticker)
+            await _process_symbol(run_id, ticker, asset_type)
         except Exception as exc:
             log.error("Unexpected error on %s: %s", ticker, exc, exc_info=True)
             notify_error(ticker, str(exc))

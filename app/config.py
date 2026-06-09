@@ -9,50 +9,57 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # ── LLM ──────────────────────────────────────────────────────────────────
-    # Default: Groq (free tier — no credit card, 30 RPM, Llama 3.3 70B)
-    # Alternatives: openai | anthropic | google | deepseek | openrouter
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
-    groq_api_key: Optional[str] = None          # free at console.groq.com
-    google_api_key: Optional[str] = None        # free at aistudio.google.com
-    openrouter_api_key: Optional[str] = None    # free models at openrouter.ai
+    groq_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
+    openrouter_api_key: Optional[str] = None
     llm_provider: str = "groq"
-    deep_think_llm: str = "llama-3.3-70b-versatile"   # Groq free — great for debates
-    quick_think_llm: str = "llama-3.1-8b-instant"     # Groq free — fast analyst passes
+    deep_think_llm: str = "llama-3.3-70b-versatile"
+    quick_think_llm: str = "llama-3.1-8b-instant"
 
-    # ── Robinhood / Vibe-Trading ─────────────────────────────────────────────
+    # ── Robinhood / Vibe-Trading ──────────────────────────────────────────────
     robinhood_mcp_url: str = "http://robinhood-mcp:8765"
     vibe_trading_runtime_root: str = "/data/vibe-runtime"
-    vibe_trading_api_key: Optional[str] = None  # bearer token for vibe api_server
+    vibe_trading_api_key: Optional[str] = None
 
-    # ── Mandate (hard caps enforced before any order reaches the broker) ─────
+    # ── Mandate ───────────────────────────────────────────────────────────────
     mandate_max_order_usd: float = 500.0
     mandate_daily_cap_usd: float = 2000.0
-    mandate_allowed_symbols: str = "AAPL,MSFT,GOOGL"  # comma-separated
+    mandate_allowed_symbols: str = "AAPL,MSFT,GOOGL"
     mandate_max_exposure_usd: float = 10_000.0
     mandate_max_trades_per_day: int = 5
 
-    # ── Market Scanner (Polygon.io) ───────────────────────────────────────────
-    polygon_api_key: Optional[str] = None   # free at polygon.io — scans full market
-    scanner_max_tickers: int = 5            # top N tickers to analyze each cycle
-    scanner_min_price: float = 5.0          # skip penny stocks
-    scanner_min_volume: int = 500_000       # skip illiquid names
+    # ── Market Scanner ────────────────────────────────────────────────────────
+    polygon_api_key: Optional[str] = None
+    scanner_max_tickers: int = 7
+    scanner_min_price: float = 5.0
+    scanner_min_volume: int = 500_000
+    scanner_crypto_symbols: str = "BTC,ETH,SOL"    # crypto always scanned
+    scanner_options_enabled: bool = False           # enable options scanning
+    prediction_symbols: str = ""                    # comma-separated prediction contracts
 
-    # ── Scheduler ────────────────────────────────────────────────────────────
+    # ── Live Research (Tavily) ────────────────────────────────────────────────
+    tavily_api_key: Optional[str] = None            # free at app.tavily.com
+
+    # ── Agent Memory (Mem0) ───────────────────────────────────────────────────
+    mem0_api_key: Optional[str] = None              # free at app.mem0.ai
+
+    # ── Scheduler ─────────────────────────────────────────────────────────────
     loop_interval_minutes: int = 60
-    analysis_date_override: Optional[str] = None  # YYYY-MM-DD; defaults to today
-    max_debate_rounds: int = 1
+    analysis_date_override: Optional[str] = None
+    max_debate_rounds: int = 2
     max_risk_rounds: int = 1
 
-    # ── Notifications ────────────────────────────────────────────────────────
+    # ── Notifications ─────────────────────────────────────────────────────────
     discord_webhook_url: Optional[str] = None
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
 
-    # ── App ──────────────────────────────────────────────────────────────────
+    # ── App ───────────────────────────────────────────────────────────────────
     debug: bool = False
     database_path: str = "/data/trading_audit.db"
-    dry_run: bool = False  # log decisions but never submit orders
+    dry_run: bool = False
 
     @field_validator("mandate_allowed_symbols", mode="before")
     @classmethod
