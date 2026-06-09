@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     mandate_max_exposure_usd: float = 10_000.0
     mandate_max_trades_per_day: int = 5
 
+    # ── Market Scanner (Polygon.io) ───────────────────────────────────────────
+    polygon_api_key: Optional[str] = None   # free at polygon.io — scans full market
+    scanner_max_tickers: int = 5            # top N tickers to analyze each cycle
+    scanner_min_price: float = 5.0          # skip penny stocks
+    scanner_min_volume: int = 500_000       # skip illiquid names
+
     # ── Scheduler ────────────────────────────────────────────────────────────
     loop_interval_minutes: int = 60
     analysis_date_override: Optional[str] = None  # YYYY-MM-DD; defaults to today

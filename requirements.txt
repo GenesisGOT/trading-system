@@ -26,6 +26,9 @@ langgraph-checkpoint-sqlite>=2.0.0
 yfinance>=0.2.54
 pandas>=2.2.0
 
+# Market scanning (Polygon.io — free tier at polygon.io)
+# httpx already handles all Polygon API calls — no extra SDK needed
+
 # Vibe-Trading SDK deps (installed from source in Dockerfile)
 # vibe-trading  ← git clone + pip install
 
