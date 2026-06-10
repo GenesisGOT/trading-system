@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    background: #080b0f;
+    color: #c9d1d9;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-terminal-card border border-terminal-border rounded-lg p-4;
+  }
+  .label {
+    @apply text-terminal-muted text-xs uppercase tracking-widest mb-1;
+  }
+  .btn {
+    @apply px-3 py-1.5 rounded text-xs font-medium border transition-all duration-150 cursor-pointer;
+  }
+  .btn-green {
+    @apply btn border-terminal-green text-terminal-green hover:bg-terminal-green hover:text-terminal-bg;
+  }
+  .btn-red {
+    @apply btn border-terminal-red text-terminal-red hover:bg-terminal-red hover:text-white;
+  }
+  .btn-muted {
+    @apply btn border-terminal-border text-terminal-muted hover:border-terminal-cyan hover:text-terminal-cyan;
+  }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold;
+  }
+  .badge-buy   { @apply badge bg-green-950 text-terminal-green border border-green-800; }
+  .badge-sell  { @apply badge bg-red-950 text-terminal-red border border-red-900; }
+  .badge-hold  { @apply badge bg-zinc-900 text-terminal-muted border border-zinc-700; }
+  .badge-submitted { @apply badge bg-blue-950 text-blue-400 border border-blue-800; }
+  .badge-blocked   { @apply badge bg-yellow-950 text-yellow-400 border border-yellow-800; }
+  .badge-dry_run   { @apply badge bg-purple-950 text-purple-400 border border-purple-800; }
+  .badge-error     { @apply badge bg-red-950 text-terminal-red border border-red-900; }
+  .table-row {
+    @apply border-b border-terminal-border hover:bg-terminal-surface transition-colors;
+  }
+  .th { @apply text-terminal-muted text-xs uppercase tracking-wider px-3 py-2 text-left; }
+  .td { @apply px-3 py-2 text-sm; }
+}
