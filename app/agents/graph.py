@@ -135,8 +135,17 @@ def node_enrich(state: dict) -> dict:
     from app.agents.tools.memory import recall_ticker, recall_macro_lessons
     from app.broker.robinhood_mcp import robinhood
 
+    from app.agents.tools.indicators import get_indicators
+    from app.agents.tools.earnings import get_earnings_context
+
     # Live market context from Robinhood (price, volume, VWAP, position, buying power, session)
     snapshot = robinhood.get_market_context(ticker, asset_type)
+
+    # Technical indicators (RSI, MACD, Bollinger, RVOL, ATR)
+    indicators = get_indicators(ticker, asset_type)
+
+    # Earnings calendar warning
+    earnings_ctx = get_earnings_context(ticker) if asset_type == "stock" else ""
 
     # Block trade if already holding and action would be a duplicate BUY
     if snapshot.get("already_holding"):
@@ -161,7 +170,6 @@ def node_enrich(state: dict) -> dict:
     memory = recall_ticker(ticker)
     macro_lessons = recall_macro_lessons()
 
-    # Add VWAP context to news string so market analyst sees it
     vwap = snapshot.get("vwap", 0)
     price = snapshot.get("price", 0)
     session = snapshot.get("market_session", "regular")
@@ -169,9 +177,12 @@ def node_enrich(state: dict) -> dict:
     if vwap and price:
         vwap_note = f"\nVWAP: ${vwap:.2f}  Current: ${price:.2f}  {'ABOVE' if price > vwap else 'BELOW'} VWAP  Session: {session}"
 
+    # Combine all context for news analyst
+    full_news = "\n\n".join(filter(None, [news, vwap_note, indicators, earnings_ctx]))
+
     return {
         **state,
-        "news_context": news + vwap_note,
+        "news_context": full_news,
         "options_flow_context": flow,
         "macro_context": macro + ("\n" + macro_lessons if macro_lessons else ""),
         "memory_context": memory,
@@ -342,6 +353,14 @@ def node_fund_manager(state: dict) -> dict:
         "prediction": "For prediction markets: evaluate the probability vs the market price.",
     }.get(asset_type, "")
 
+    snap = state.get("market_snapshot", {})
+    portfolio_note = ""
+    if snap.get("already_holding"):
+        pos = snap.get("current_position") or {}
+        qty = pos.get("quantity") or pos.get("shares_held_for_sells") or "unknown"
+        avg_price = pos.get("average_buy_price") or "unknown"
+        portfolio_note = f"\n⚠️ PORTFOLIO: Already holding {qty} units of {ticker} at avg ${avg_price}. Do NOT issue another BUY unless clearly adding to a winning position is justified. Prefer HOLD or SELL."
+
     prompt = f"""You are the Fund Manager. Make the FINAL trading decision for {ticker}.
 
 BULL CASE: {state['bull_argument']}
@@ -356,7 +375,7 @@ ANALYST REPORTS SUMMARY:
 - Options Flow: {state['options_report'][:150]}
 
 PAST MEMORY: {state['memory_context'][:200]}
-
+{portfolio_note}
 {asset_note}
 
 Respond in EXACTLY this format:
@@ -364,6 +383,8 @@ ACTION: [BUY or SELL or HOLD]
 RATING: [Strong Buy / Buy / Overweight / Hold / Underweight / Sell / Strong Sell]
 CONFIDENCE: [0.0-1.0]
 PRICE_TARGET: [number or N/A]
+STOP_LOSS: [price level to exit if wrong, or N/A]
+TAKE_PROFIT: [price level to take gains, or N/A]
 TIME_HORIZON: [e.g. "1-2 weeks" or N/A]
 THESIS: [2-3 sentence investment thesis explaining the decision]"""
 
@@ -385,6 +406,7 @@ def _parse_fund_manager(text: str) -> dict:
     result = {
         "action": "HOLD", "rating": "Hold", "confidence": 0.5,
         "investment_thesis": "", "price_target": None, "time_horizon": None,
+        "stop_loss": None, "take_profit": None,
     }
     thesis_lines = []
     for line in text.split("\n"):
@@ -405,6 +427,20 @@ def _parse_fund_manager(text: str) -> dict:
             if val.upper() != "N/A":
                 try:
                     result["price_target"] = float(val.replace("$", "").replace(",", ""))
+                except ValueError:
+                    pass
+        elif line.startswith("STOP_LOSS:"):
+            val = line.split(":", 1)[1].strip()
+            if val.upper() != "N/A":
+                try:
+                    result["stop_loss"] = float(val.replace("$", "").replace(",", ""))
+                except ValueError:
+                    pass
+        elif line.startswith("TAKE_PROFIT:"):
+            val = line.split(":", 1)[1].strip()
+            if val.upper() != "N/A":
+                try:
+                    result["take_profit"] = float(val.replace("$", "").replace(",", ""))
                 except ValueError:
                     pass
         elif line.startswith("TIME_HORIZON:"):
@@ -526,6 +562,8 @@ class GraphResult:
     confidence: float
     investment_thesis: str
     price_target: Optional[float]
+    stop_loss: Optional[float]
+    take_profit: Optional[float]
     time_horizon: Optional[str]
     validation_confidence: float
     validation_proceed: bool
@@ -553,6 +591,8 @@ def run_graph(ticker: str, asset_type: str, analysis_date: str) -> GraphResult:
         confidence=final.get("confidence", 0.5),
         investment_thesis=final.get("investment_thesis", ""),
         price_target=final.get("price_target"),
+        stop_loss=final.get("stop_loss"),
+        take_profit=final.get("take_profit"),
         time_horizon=final.get("time_horizon"),
         validation_confidence=final.get("validation_confidence", 0.5),
         validation_proceed=final.get("validation_proceed", True),

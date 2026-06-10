@@ -176,6 +176,28 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
         volume=market_ctx.get("volume"), asset_type=asset_type,
     )
 
+    # ── Register stop loss / take profit for executed BUY orders ──────────
+    if order.status in ("submitted", "dry_run") and side == "buy":
+        entry = market_ctx.get("price", 0)
+        if entry:
+            try:
+                from app.agents.stop_loss_monitor import register_stop
+                from app.agents.tools.indicators import suggested_stop_loss
+                atr_stop = suggested_stop_loss(ticker, entry, asset_type)
+                register_stop(
+                    ticker=ticker,
+                    asset_type=asset_type,
+                    side=side,
+                    entry_price=entry,
+                    quantity=quantity,
+                    notional=notional,
+                    order_id=order.order_id,
+                    atr_stop=result.stop_loss or atr_stop,
+                    take_profit_pct=0.10,
+                )
+            except Exception as exc:
+                log.warning("[%s] Stop registration failed: %s", ticker, exc)
+
 
 # ── Session detection ─────────────────────────────────────────────────────────
 
@@ -298,6 +320,15 @@ async def _run_crypto_loop() -> None:
             log.error("Crypto loop error on %s: %s", ticker, exc)
 
 
+async def _check_stops_job() -> None:
+    """APScheduler wrapper for stop loss / take profit monitor."""
+    try:
+        from app.agents.stop_loss_monitor import check_stops
+        await check_stops()
+    except Exception as exc:
+        log.error("Stop monitor error: %s", exc)
+
+
 def start_scheduler() -> None:
     global _scheduler
     _scheduler = AsyncIOScheduler()
@@ -324,8 +355,19 @@ def start_scheduler() -> None:
         max_instances=1,
     )
 
+    # Stop loss / take profit monitor — every 5 minutes
+    _scheduler.add_job(
+        _check_stops_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="stop_monitor",
+        name="Stop loss / take profit monitor",
+        replace_existing=True,
+        misfire_grace_time=60,
+        max_instances=1,
+    )
+
     _scheduler.start()
-    log.info("Scheduler started — main=%dmin crypto=%dmin",
+    log.info("Scheduler started — main=%dmin crypto=%dmin stops=5min",
              settings.loop_interval_minutes, settings.crypto_loop_interval_minutes)
 
 
