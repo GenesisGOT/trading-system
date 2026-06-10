@@ -176,3 +176,20 @@ async def test_notification(message: str = "Test notification from trading syste
     """Send a test notification to verify webhook configuration."""
     notify(f"[TEST] {message}")
     return {"sent": True}
+
+
+@app.get("/debug")
+async def debug():
+    """Debug endpoint — shows scanner output and config."""
+    from app.scanner import scan_market
+    from app.scheduler import _get_session
+    import asyncio
+    symbols = await asyncio.to_thread(scan_market)
+    return {
+        "session": _get_session(),
+        "scanner_crypto_symbols": settings.scanner_crypto_symbols,
+        "polygon_api_key_set": bool(settings.polygon_api_key),
+        "tavily_api_key_set": bool(settings.tavily_api_key),
+        "mem0_api_key_set": bool(settings.mem0_api_key),
+        "scan_result": symbols,
+    }
