@@ -48,7 +48,7 @@ PyPortfolioOpt>=1.5.5
 riskfolio-lib>=6.0.0
 
 # Technical analysis library (TA-Lib pure Python fallback)
-pandas-ta>=0.3.14b
+pandas-ta @ git+https://github.com/twopirllc/pandas-ta.git@development
 
 # Market regime detection (Hidden Markov Model)
 hmmlearn>=0.3.2
