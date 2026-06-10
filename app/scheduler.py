@@ -47,10 +47,27 @@ _halted: bool = False
 
 # ── Order sizing ──────────────────────────────────────────────────────────────
 
-def _size_order(action: str, asset_type: str, current_price: Optional[float]) -> tuple[float, Optional[float]]:
-    notional = settings.mandate_max_order_usd
-    if notional >= 999_999:
-        notional = None  # unlimited — broker enforces the real cap
+def _size_order(
+    action: str,
+    asset_type: str,
+    current_price: Optional[float],
+    confidence: float = 0.5,
+    buying_power: float = 0.0,
+    ticker: str = "",
+) -> tuple[float, Optional[float]]:
+    if settings.mandate_max_order_usd >= 999_999:
+        return 0.0, None  # unlimited — broker enforces the real cap
+    try:
+        from app.sizing import kelly_size
+        notional = kelly_size(
+            confidence=confidence,
+            buying_power=buying_power if buying_power > 0 else settings.mandate_max_order_usd,
+            ticker=ticker,
+            asset_type=asset_type,
+        )
+    except Exception as exc:
+        log.warning("Kelly sizing failed (%s) — using flat cap", exc)
+        notional = settings.mandate_max_order_usd
     return 0.0, notional
 
 
@@ -152,7 +169,11 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
 
     # ── 8. Execute ────────────────────────────────────────────────────────
     side = result.action.lower()
-    quantity, notional = _size_order(result.action, asset_type, market_ctx.get("price"))
+    quantity, notional = _size_order(
+        result.action, asset_type, market_ctx.get("price"),
+        confidence=result.confidence, buying_power=market_ctx.get("buying_power", 0),
+        ticker=ticker,
+    )
 
     order = broker.place_order(ticker, side, quantity, notional, asset_type=asset_type)
     log.info("[%s] Broker: status=%s order_id=%s", ticker, order.status, order.order_id)

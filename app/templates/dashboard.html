@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading System Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0d0d0d; color: #e0e0e0; font-family: 'Courier New', monospace; font-size: 13px; }
+  header { background: #111; border-bottom: 1px solid #2a2a2a; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { color: #00ff88; font-size: 16px; letter-spacing: 2px; }
+  .status-pill { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+  .pill-live { background: #003320; color: #00ff88; border: 1px solid #00ff88; }
+  .pill-dry  { background: #332200; color: #ffaa00; border: 1px solid #ffaa00; }
+  .pill-halt { background: #330000; color: #ff4444; border: 1px solid #ff4444; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; padding: 16px 24px; }
+  .card { background: #111; border: 1px solid #222; border-radius: 6px; padding: 14px; }
+  .card-label { color: #666; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .card-value { font-size: 22px; font-weight: bold; color: #fff; }
+  .card-value.green { color: #00ff88; }
+  .card-value.red   { color: #ff4444; }
+  .card-value.yellow{ color: #ffaa00; }
+  .section { padding: 0 24px 24px; }
+  .section h2 { color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; border-bottom: 1px solid #222; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { color: #555; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; padding: 6px 8px; text-align: left; border-bottom: 1px solid #222; }
+  td { padding: 7px 8px; border-bottom: 1px solid #1a1a1a; font-size: 12px; }
+  tr:hover td { background: #161616; }
+  .badge { padding: 2px 7px; border-radius: 10px; font-size: 10px; font-weight: bold; }
+  .badge-buy     { background: #003320; color: #00ff88; }
+  .badge-sell    { background: #330000; color: #ff4444; }
+  .badge-hold    { background: #1a1a1a; color: #666; }
+  .badge-submitted { background: #002233; color: #00aaff; }
+  .badge-blocked { background: #2a1a00; color: #ffaa00; }
+  .badge-dry_run { background: #1a0033; color: #bb88ff; }
+  .stops-table .stop-price { color: #ffaa00; }
+  .stops-table .trail-high { color: #00ff88; }
+  .stops-table .pnl-pos { color: #00ff88; }
+  .stops-table .pnl-neg { color: #ff4444; }
+  .btn { background: #1a1a1a; border: 1px solid #333; color: #ccc; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 12px; }
+  .btn:hover { background: #222; border-color: #555; }
+  .btn-danger { border-color: #ff4444; color: #ff4444; }
+  .btn-danger:hover { background: #1a0000; }
+  .btn-green { border-color: #00ff88; color: #00ff88; }
+  .btn-green:hover { background: #001a0d; }
+  .controls { display: flex; gap: 8px; padding: 0 24px 16px; flex-wrap: wrap; align-items: center; }
+  .session-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; border: 1px solid #333; color: #aaa; }
+  #toast { position: fixed; bottom: 20px; right: 20px; background: #111; border: 1px solid #333; padding: 10px 16px; border-radius: 6px; display: none; }
+  .refresh-time { color: #444; font-size: 11px; }
+  .fg-score { font-size: 28px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ TRADING SYSTEM</h1>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <span id="session-badge" class="session-badge">—</span>
+    <span id="mode-pill" class="status-pill pill-dry">DRY RUN</span>
+    <span id="halt-pill" class="status-pill" style="display:none"></span>
+    <span class="refresh-time" id="last-refresh">—</span>
+  </div>
+</header>
+
+<div class="grid" id="stat-grid">
+  <div class="card"><div class="card-label">Daily Trades</div><div class="card-value" id="stat-trades">—</div></div>
+  <div class="card"><div class="card-label">Open Stops</div><div class="card-value" id="stat-stops">—</div></div>
+  <div class="card"><div class="card-label">Today P&L</div><div class="card-value" id="stat-pnl">—</div></div>
+  <div class="card"><div class="card-label">Fear & Greed</div><div class="card-value" id="stat-fg">—</div></div>
+  <div class="card"><div class="card-label">Win Rate (30d)</div><div class="card-value" id="stat-wr">—</div></div>
+  <div class="card"><div class="card-label">Buying Power</div><div class="card-value" id="stat-bp">—</div></div>
+</div>
+
+<div class="controls">
+  <button class="btn btn-green" onclick="triggerRun()">▶ Trigger Scan</button>
+  <button class="btn btn-danger" id="halt-btn" onclick="haltTrading()">⏹ Halt</button>
+  <button class="btn" id="resume-btn" onclick="resumeTrading()" style="display:none">▶ Resume</button>
+  <button class="btn" onclick="loadAll()">↻ Refresh</button>
+</div>
+
+<div class="section">
+  <h2>Open Positions (Trailing Stops)</h2>
+  <table class="stops-table">
+    <thead><tr>
+      <th>Ticker</th><th>Type</th><th>Entry</th><th>Current</th>
+      <th>High Water</th><th>Trailing Stop</th><th>Target</th><th>P&L</th><th>Opened</th>
+    </tr></thead>
+    <tbody id="stops-body"><tr><td colspan="9" style="color:#444;text-align:center">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Recent Decisions</h2>
+  <table>
+    <thead><tr>
+      <th>Time</th><th>Ticker</th><th>Action</th><th>Rating</th>
+      <th>Confidence</th><th>Price Target</th><th>Thesis</th>
+    </tr></thead>
+    <tbody id="decisions-body"><tr><td colspan="7" style="color:#444;text-align:center">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Trade Executions</h2>
+  <table>
+    <thead><tr>
+      <th>Time</th><th>Ticker</th><th>Side</th><th>Notional</th>
+      <th>Status</th><th>Order ID</th><th>Reason</th>
+    </tr></thead>
+    <tbody id="exec-body"><tr><td colspan="7" style="color:#444;text-align:center">Loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const BASE = '';
+
+function toast(msg, color='#00ff88') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.color = color; t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 3000);
+}
+
+function fmt(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleString('en-US', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
+}
+
+function badge(cls, text) {
+  return `<span class="badge badge-${cls}">${text}</span>`;
+}
+
+async function loadStatus() {
+  try {
+    const r = await fetch(BASE + '/status');
+    const d = await r.json();
+    document.getElementById('stat-trades').textContent = d.daily_trades_today;
+    document.getElementById('stat-bp').textContent = d.broker_status?.buying_power
+      ? '$' + Number(d.broker_status.buying_power).toLocaleString('en-US', {maximumFractionDigits:0})
+      : '—';
+
+    const pill = document.getElementById('mode-pill');
+    pill.textContent = d.dry_run ? 'DRY RUN' : 'LIVE';
+    pill.className = 'status-pill ' + (d.dry_run ? 'pill-dry' : 'pill-live');
+
+    document.getElementById('session-badge').textContent = d.broker_status?.session || '—';
+
+    const hpill = document.getElementById('halt-pill');
+    const hbtn  = document.getElementById('halt-btn');
+    const rbtn  = document.getElementById('resume-btn');
+    if (d.halted) {
+      hpill.textContent = '🛑 HALTED'; hpill.className = 'status-pill pill-halt'; hpill.style.display = '';
+      hbtn.style.display = 'none'; rbtn.style.display = '';
+    } else {
+      hpill.style.display = 'none'; hbtn.style.display = ''; rbtn.style.display = 'none';
+    }
+    document.getElementById('last-refresh').textContent = 'updated ' + fmt(d.timestamp);
+  } catch(e) { console.error(e); }
+}
+
+async function loadStops() {
+  try {
+    const r = await fetch(BASE + '/positions');
+    const positions = await r.json();
+    document.getElementById('stat-stops').textContent = positions.length;
+    const tb = document.getElementById('stops-body');
+    if (!positions.length) {
+      tb.innerHTML = '<tr><td colspan="9" style="color:#444;text-align:center">No open positions</td></tr>';
+      return;
+    }
+    tb.innerHTML = positions.map(p => {
+      const pnl = p.pnl_pct != null ? (p.pnl_pct >= 0
+        ? `<span class="pnl-pos">+${(p.pnl_pct*100).toFixed(1)}%</span>`
+        : `<span class="pnl-neg">${(p.pnl_pct*100).toFixed(1)}%</span>`) : '—';
+      return `<tr>
+        <td><b>${p.ticker}</b></td>
+        <td>${p.asset_type}</td>
+        <td>$${p.entry_price?.toFixed(2)}</td>
+        <td>${p.current_price ? '$'+p.current_price.toFixed(2) : '—'}</td>
+        <td class="trail-high">${p.high_water ? '$'+p.high_water.toFixed(2) : '—'}</td>
+        <td class="stop-price">$${p.stop_loss?.toFixed(2)}</td>
+        <td>$${p.take_profit?.toFixed(2)}</td>
+        <td>${pnl}</td>
+        <td>${fmt(p.opened_at)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadDecisions() {
+  try {
+    const r = await fetch(BASE + '/decisions?limit=20');
+    const rows = await r.json();
+    const tb = document.getElementById('decisions-body');
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" style="color:#444;text-align:center">No decisions yet</td></tr>'; return; }
+    tb.innerHTML = rows.map(d => `<tr>
+      <td>${fmt(d.created_at)}</td>
+      <td><b>${d.ticker}</b></td>
+      <td>${badge(d.action?.toLowerCase(), d.action)}</td>
+      <td style="color:#aaa">${d.rating}</td>
+      <td>${d.confidence != null ? (d.confidence*100).toFixed(0)+'%' : '—'}</td>
+      <td>${d.price_target ? '$'+d.price_target : '—'}</td>
+      <td style="color:#888;max-width:280px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis" title="${(d.investment_thesis||'').replace(/"/g,"'")}">
+        ${(d.investment_thesis||'').substring(0,80)}${d.investment_thesis?.length>80?'…':''}
+      </td>
+    </tr>`).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadExecutions() {
+  try {
+    const r = await fetch(BASE + '/executions?limit=20');
+    const rows = await r.json();
+    const tb = document.getElementById('exec-body');
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" style="color:#444;text-align:center">No executions yet</td></tr>'; return; }
+    tb.innerHTML = rows.map(e => `<tr>
+      <td>${fmt(e.created_at)}</td>
+      <td><b>${e.ticker}</b></td>
+      <td>${badge(e.side, e.side?.toUpperCase())}</td>
+      <td>${e.notional_usd ? '$'+Number(e.notional_usd).toFixed(2) : '—'}</td>
+      <td>${badge(e.status, e.status)}</td>
+      <td style="color:#555;font-size:11px">${e.order_id || '—'}</td>
+      <td style="color:#888">${e.block_reason || ''}</td>
+    </tr>`).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadMetrics() {
+  try {
+    const r = await fetch(BASE + '/metrics');
+    const m = await r.json();
+    if (m.fear_greed_score != null) {
+      const fg = document.getElementById('stat-fg');
+      const score = Math.round(m.fear_greed_score);
+      fg.textContent = score;
+      fg.className = 'card-value ' + (score >= 70 ? 'red' : score <= 30 ? 'green' : 'yellow');
+    }
+    if (m.win_rate_30d != null) {
+      const wr = document.getElementById('stat-wr');
+      wr.textContent = (m.win_rate_30d * 100).toFixed(0) + '%';
+      wr.className = 'card-value ' + (m.win_rate_30d >= 0.55 ? 'green' : m.win_rate_30d <= 0.40 ? 'red' : 'yellow');
+    }
+    if (m.pnl_today != null) {
+      const pnl = document.getElementById('stat-pnl');
+      pnl.textContent = (m.pnl_today >= 0 ? '+' : '') + '$' + Math.abs(m.pnl_today).toFixed(2);
+      pnl.className = 'card-value ' + (m.pnl_today >= 0 ? 'green' : 'red');
+    }
+  } catch(e) {}
+}
+
+async function triggerRun() {
+  try {
+    const r = await fetch(BASE + '/trigger', {method:'POST'});
+    const d = await r.json();
+    toast('✅ Scan triggered — ' + d.run_id);
+  } catch(e) { toast('❌ ' + e, '#ff4444'); }
+}
+
+async function haltTrading() {
+  try {
+    await fetch(BASE + '/halt', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{"reason":"dashboard halt"}'});
+    toast('🛑 System halted', '#ff4444');
+    loadStatus();
+  } catch(e) {}
+}
+
+async function resumeTrading() {
+  try {
+    await fetch(BASE + '/resume', {method:'POST'});
+    toast('▶ System resumed', '#00ff88');
+    loadStatus();
+  } catch(e) {}
+}
+
+async function loadAll() {
+  await Promise.all([loadStatus(), loadStops(), loadDecisions(), loadExecutions(), loadMetrics()]);
+}
+
+loadAll();
+setInterval(loadAll, 30000);  // auto-refresh every 30s
+</script>
+</body>
+</html>

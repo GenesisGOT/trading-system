@@ -37,5 +37,18 @@ pytz>=2024.1                  # timezone-aware session detection
 # Vibe-Trading SDK deps (installed from source in Dockerfile)
 # vibe-trading  ← git clone + pip install
 
+# Dashboard templating
+jinja2>=3.1.0
+
+# Multi-exchange crypto data (CCXT)
+ccxt>=4.3.0
+
+# Portfolio optimization
+PyPortfolioOpt>=1.5.5
+riskfolio-lib>=6.0.0
+
+# Technical analysis library (TA-Lib pure Python fallback)
+pandas-ta>=0.3.14b
+
 # Utilities
 python-dotenv>=1.0.1

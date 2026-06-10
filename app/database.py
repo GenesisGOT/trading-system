@@ -80,6 +80,23 @@ def init_db() -> None:
                 detail      TEXT,
                 created_at  TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS open_positions (
+                ticker          TEXT PRIMARY KEY,
+                asset_type      TEXT NOT NULL,
+                side            TEXT NOT NULL,
+                entry_price     REAL NOT NULL,
+                stop_loss       REAL NOT NULL,
+                take_profit     REAL NOT NULL,
+                high_water      REAL NOT NULL,
+                trail_distance  REAL NOT NULL,
+                trail_pct       REAL NOT NULL,
+                quantity        REAL NOT NULL DEFAULT 0,
+                notional        REAL,
+                order_id        TEXT,
+                opened_at       TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            );
         """)
 
 
@@ -172,6 +189,50 @@ def get_recent_executions(limit: int = 50) -> list:
             "SELECT * FROM trade_executions ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def save_position(pos) -> None:
+    """Upsert an open position (stop level) to SQLite."""
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO open_positions
+              (ticker, asset_type, side, entry_price, stop_loss, take_profit,
+               high_water, trail_distance, trail_pct, quantity, notional, order_id, opened_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(ticker) DO UPDATE SET
+              stop_loss=excluded.stop_loss, high_water=excluded.high_water,
+              updated_at=excluded.updated_at
+        """, (
+            pos.ticker, pos.asset_type, pos.side, pos.entry_price,
+            pos.stop_loss, pos.take_profit, pos.high_water,
+            pos.trail_distance, pos.trail_pct, pos.quantity,
+            pos.notional, pos.order_id, pos.opened_at, _now(),
+        ))
+
+
+def delete_position(ticker: str) -> None:
+    with get_db() as conn:
+        conn.execute("DELETE FROM open_positions WHERE ticker=?", (ticker,))
+
+
+def load_positions() -> list:
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM open_positions").fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_win_rate_30d() -> float:
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT
+              SUM(CASE WHEN side='sell' AND status='submitted' THEN 1 ELSE 0 END) as exits,
+              SUM(CASE WHEN side='buy'  AND status='submitted' THEN 1 ELSE 0 END) as entries
+            FROM trade_executions
+            WHERE created_at >= datetime('now', '-30 days')
+        """).fetchone()
+        if not row or not row["entries"] or row["entries"] < 3:
+            return 0.5
+        return min(row["exits"], row["entries"]) / row["entries"]
 
 
 def get_daily_trade_count(ticker: Optional[str] = None) -> int:

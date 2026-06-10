@@ -8,15 +8,20 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from pathlib import Path
 
 from app.config import settings
 from app.database import (
     get_recent_decisions,
     get_recent_executions,
     get_daily_trade_count,
+    get_win_rate_30d,
     init_db,
     log_system_event,
 )
@@ -37,6 +42,10 @@ async def lifespan(app: FastAPI):
     init_db()
     log_system_event("startup", f"symbols={settings.allowed_symbols} dry_run={settings.dry_run}")
 
+    # Restore trailing stops that survived a redeploy
+    from app.agents.stop_loss_monitor import restore_positions_from_db
+    restore_positions_from_db()
+
     from app.scheduler import start_scheduler
     start_scheduler()
 
@@ -51,10 +60,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Multi-Agent Trading System",
-    version="1.0.0",
+    version="2.0.0",
     description="TradingAgents × Vibe-Trading × Robinhood MCP",
     lifespan=lifespan,
 )
+
+_templates_path = Path(__file__).parent / "templates"
+templates = Jinja2Templates(directory=str(_templates_path))
 
 app.add_middleware(
     CORSMiddleware,
@@ -193,3 +205,113 @@ async def debug():
         "mem0_api_key_set": bool(settings.mem0_api_key),
         "scan_result": symbols,
     }
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    """Live trading dashboard."""
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+
+@app.get("/positions")
+async def get_positions():
+    """Return open positions with trailing stop details and live P&L."""
+    from app.agents.stop_loss_monitor import get_open_stops
+    from app.broker.robinhood_mcp import robinhood
+    positions = []
+    for pos in get_open_stops():
+        current_price = None
+        pnl_pct = None
+        try:
+            ctx = robinhood.get_market_context(pos.ticker, pos.asset_type)
+            current_price = ctx.get("price")
+            if current_price and pos.entry_price:
+                pnl_pct = (current_price - pos.entry_price) / pos.entry_price
+        except Exception:
+            pass
+        positions.append({
+            "ticker": pos.ticker,
+            "asset_type": pos.asset_type,
+            "side": pos.side,
+            "entry_price": pos.entry_price,
+            "stop_loss": pos.stop_loss,
+            "take_profit": pos.take_profit,
+            "high_water": pos.high_water,
+            "trail_pct": pos.trail_pct,
+            "quantity": pos.quantity,
+            "notional": pos.notional,
+            "order_id": pos.order_id,
+            "opened_at": pos.opened_at,
+            "current_price": current_price,
+            "pnl_pct": pnl_pct,
+        })
+    return positions
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """Return dashboard metrics: win rate, Fear & Greed, today's P&L."""
+    from app.agents.tools.market_sentiment import get_fear_greed
+    metrics: Dict[str, Any] = {
+        "win_rate_30d": get_win_rate_30d(),
+        "daily_trades": get_daily_trade_count(),
+        "pnl_today": None,
+        "fear_greed_score": None,
+        "fear_greed_label": None,
+    }
+    try:
+        import httpx
+        resp = httpx.get(
+            "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+            timeout=8, headers={"User-Agent": "Mozilla/5.0"},
+        )
+        if resp.status_code == 200:
+            fg = resp.json()["fear_and_greed"]
+            metrics["fear_greed_score"] = fg["score"]
+            metrics["fear_greed_label"] = fg["rating"]
+    except Exception:
+        pass
+    return metrics
+
+
+# ── TradingView Webhook ───────────────────────────────────────────────────────
+
+class TradingViewAlert(BaseModel):
+    ticker: str
+    action: str          # BUY | SELL
+    price: Optional[float] = None
+    confidence: float = 0.75
+    asset_type: str = "stock"
+    secret: Optional[str] = None
+
+
+@app.post("/webhook/tradingview")
+async def tradingview_webhook(alert: TradingViewAlert):
+    """Receive TradingView Pine Script alerts and inject them as high-confidence signals.
+
+    Pine Script usage:
+      alertcondition(crossover(ema9, ema21), title="BUY Signal")
+      alert('{"ticker":"{{ticker}}","action":"BUY","price":{{close}},"secret":"YOUR_SECRET"}', alert.freq_once_per_bar)
+    """
+    webhook_secret = getattr(settings, "tradingview_webhook_secret", None)
+    if webhook_secret and alert.secret != webhook_secret:
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
+    from app.scheduler import is_halted, _process_symbol
+    if is_halted():
+        return {"status": "halted", "message": "System is halted"}
+
+    import uuid
+    run_id = f"tv-{str(uuid.uuid4())[:6]}"
+    log.info("[TradingView] %s %s @ $%s conf=%.2f", alert.action, alert.ticker, alert.price, alert.confidence)
+
+    notify(
+        f"📡 *TradingView Alert*\n"
+        f"{alert.action} {alert.ticker} @ ${alert.price or 'market'}\n"
+        f"Confidence: {alert.confidence:.0%} — queuing analysis"
+    )
+
+    asyncio.create_task(_process_symbol(run_id, alert.ticker.upper(), alert.asset_type))
+    return {"status": "queued", "ticker": alert.ticker, "action": alert.action, "run_id": run_id}

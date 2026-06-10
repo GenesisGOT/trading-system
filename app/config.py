@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
 
+    # ── Webhooks ──────────────────────────────────────────────────────────────
+    tradingview_webhook_secret: Optional[str] = None   # set to lock down /webhook/tradingview
+
     # ── App ───────────────────────────────────────────────────────────────────
     debug: bool = False
     database_path: str = "/data/trading_audit.db"

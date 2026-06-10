@@ -137,12 +137,21 @@ def node_enrich(state: dict) -> dict:
 
     from app.agents.tools.indicators import get_indicators
     from app.agents.tools.earnings import get_earnings_context
+    from app.agents.tools.multiframe import get_multiframe_analysis
+    from app.agents.tools.market_sentiment import get_macro_sentiment, get_ticker_crowd_sentiment
 
     # Live market context from Robinhood (price, volume, VWAP, position, buying power, session)
     snapshot = robinhood.get_market_context(ticker, asset_type)
 
     # Technical indicators (RSI, MACD, Bollinger, RVOL, ATR)
     indicators = get_indicators(ticker, asset_type)
+
+    # Multi-timeframe trend alignment (1h/4h/daily)
+    mtf_text, mtf_confluence = get_multiframe_analysis(ticker, asset_type)
+
+    # Fear & Greed + crowd sentiment (StockTwits / Reddit)
+    macro_sentiment = get_macro_sentiment()
+    crowd_sentiment = get_ticker_crowd_sentiment(ticker, asset_type)
 
     # Earnings calendar warning
     earnings_ctx = get_earnings_context(ticker) if asset_type == "stock" else ""
@@ -178,15 +187,15 @@ def node_enrich(state: dict) -> dict:
         vwap_note = f"\nVWAP: ${vwap:.2f}  Current: ${price:.2f}  {'ABOVE' if price > vwap else 'BELOW'} VWAP  Session: {session}"
 
     # Combine all context for news analyst
-    full_news = "\n\n".join(filter(None, [news, vwap_note, indicators, earnings_ctx]))
+    full_news = "\n\n".join(filter(None, [news, vwap_note, indicators, mtf_text, earnings_ctx, crowd_sentiment]))
 
     return {
         **state,
         "news_context": full_news,
         "options_flow_context": flow,
-        "macro_context": macro + ("\n" + macro_lessons if macro_lessons else ""),
+        "macro_context": "\n\n".join(filter(None, [macro, macro_lessons, macro_sentiment])),
         "memory_context": memory,
-        "market_snapshot": snapshot,
+        "market_snapshot": {**snapshot, "mtf_confluence": mtf_confluence},
     }
 
 
@@ -355,6 +364,15 @@ def node_fund_manager(state: dict) -> dict:
 
     snap = state.get("market_snapshot", {})
     portfolio_note = ""
+    mtf = snap.get("mtf_confluence", 0.0)
+    mtf_note = ""
+    if mtf >= 0.67:
+        mtf_note = "\n✅ MULTI-TIMEFRAME: All timeframes aligned BULLISH — higher conviction for BUY."
+    elif mtf <= -0.67:
+        mtf_note = "\n❌ MULTI-TIMEFRAME: All timeframes aligned BEARISH — avoid BUY, lean SELL/HOLD."
+    elif abs(mtf) < 0.34:
+        mtf_note = "\n⚠️ MULTI-TIMEFRAME: Timeframes conflicted — reduce size or wait for alignment."
+
     if snap.get("already_holding"):
         pos = snap.get("current_position") or {}
         qty = pos.get("quantity") or pos.get("shares_held_for_sells") or "unknown"
@@ -375,7 +393,7 @@ ANALYST REPORTS SUMMARY:
 - Options Flow: {state['options_report'][:150]}
 
 PAST MEMORY: {state['memory_context'][:200]}
-{portfolio_note}
+{portfolio_note}{mtf_note}
 {asset_note}
 
 Respond in EXACTLY this format:

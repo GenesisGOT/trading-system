@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from app.config import settings
-from app.database import log_execution, log_system_event
+from app.database import log_execution, log_system_event, save_position, delete_position, load_positions
 from app.notifications import notify
 
 log = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ def register_stop(
     # Hard take-profit ceiling (can be disabled by setting very high)
     hard_target = round(entry_price * (1 + take_profit_pct), 4)
 
-    _open_positions[ticker] = StopLevel(
+    pos = StopLevel(
         ticker=ticker,
         asset_type=asset_type,
         side=side,
@@ -107,6 +107,11 @@ def register_stop(
         trail_distance=trail_dist,
         trail_pct=trail_pct,
     )
+    _open_positions[ticker] = pos
+    try:
+        save_position(pos)
+    except Exception as exc:
+        log.warning("[%s] Failed to persist position to DB: %s", ticker, exc)
     log.info(
         "[%s] Trailing stop registered: entry=%.4f initial_stop=%.4f trail=%.1f%% target=%.4f",
         ticker, entry_price, initial_stop, trail_pct * 100, hard_target,
@@ -121,6 +126,37 @@ def register_stop(
 
 def remove_stop(ticker: str) -> None:
     _open_positions.pop(ticker, None)
+    try:
+        delete_position(ticker)
+    except Exception:
+        pass
+
+
+def restore_positions_from_db() -> None:
+    """Called on startup — reload open positions from SQLite so trailing stops survive redeploys."""
+    try:
+        rows = load_positions()
+        for r in rows:
+            pos = StopLevel(
+                ticker=r["ticker"],
+                asset_type=r["asset_type"],
+                side=r["side"],
+                entry_price=r["entry_price"],
+                stop_loss=r["stop_loss"],
+                take_profit=r["take_profit"],
+                quantity=r["quantity"],
+                notional=r["notional"],
+                order_id=r["order_id"],
+                opened_at=r["opened_at"],
+                high_water=r["high_water"],
+                trail_distance=r["trail_distance"],
+                trail_pct=r["trail_pct"],
+            )
+            _open_positions[r["ticker"]] = pos
+        if rows:
+            log.info("Restored %d open positions from DB", len(rows))
+    except Exception as exc:
+        log.warning("Could not restore positions from DB: %s", exc)
 
 
 def get_open_stops() -> List[StopLevel]:
@@ -146,6 +182,10 @@ def _ratchet_stop(pos: StopLevel, current_price: float) -> bool:
         "[%s] Trailing stop ratcheted: price=%.4f stop %.4f → %.4f (locked %+.1f%%)",
         pos.ticker, current_price, old_stop, new_stop, locked_pct * 100,
     )
+    try:
+        save_position(pos)
+    except Exception:
+        pass
     return True
 
 
