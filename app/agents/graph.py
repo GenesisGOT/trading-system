@@ -126,27 +126,32 @@ def _get_llm(quick: bool = False):
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 
 def node_enrich(state: dict) -> dict:
-    """Pull live news, options flow, macro context, and past memory in parallel."""
+    """Pull live data from Robinhood MCP + Tavily search + Mem0 memory."""
     ticker = state["ticker"]
     asset_type = state["asset_type"]
-    log.info("[%s] Enriching with live data (Tavily + Mem0)", ticker)
+    log.info("[%s] Enriching — Robinhood MCP + Tavily + Mem0", ticker)
 
     from app.agents.tools.search import search_ticker_news, search_options_flow, search_macro_context
     from app.agents.tools.memory import recall_ticker, recall_macro_lessons
-    from app.scanner import get_ticker_context
+    from app.broker.robinhood_mcp import robinhood
 
-    # Asset-specific search queries
+    # Live market context from Robinhood (price, volume, VWAP, position, buying power, session)
+    snapshot = robinhood.get_market_context(ticker, asset_type)
+
+    # Block trade if already holding and action would be a duplicate BUY
+    if snapshot.get("already_holding"):
+        log.info("[%s] Already holding position — agents will factor this in", ticker)
+
+    # Asset-specific Tavily search
     if asset_type == "crypto":
-        news = search_ticker_news(ticker, f"{ticker} crypto price prediction sentiment on-chain")
-        flow = search_options_flow(ticker) if ticker not in ("BTC", "ETH", "SOL") else \
-               search_ticker_news(ticker, f"{ticker} whale activity large transactions funding rate")
+        news = search_ticker_news(ticker, f"{ticker} crypto price prediction sentiment on-chain funding rate")
+        flow = search_ticker_news(ticker, f"{ticker} whale large transaction exchange flow")
     elif asset_type == "option":
-        # For options, ticker is like "AAPL_240119C00150000"
         underlying = ticker.split("_")[0] if "_" in ticker else ticker
         news = search_ticker_news(underlying, f"{underlying} options implied volatility earnings catalyst")
         flow = search_options_flow(underlying)
     elif asset_type == "prediction":
-        news = search_ticker_news(ticker, f"{ticker} prediction market odds probability")
+        news = search_ticker_news(ticker, f"{ticker} prediction market odds probability event")
         flow = ""
     else:
         news = search_ticker_news(ticker)
@@ -155,11 +160,18 @@ def node_enrich(state: dict) -> dict:
     macro = search_macro_context()
     memory = recall_ticker(ticker)
     macro_lessons = recall_macro_lessons()
-    snapshot = get_ticker_context(ticker) if asset_type == "stock" else {}
+
+    # Add VWAP context to news string so market analyst sees it
+    vwap = snapshot.get("vwap", 0)
+    price = snapshot.get("price", 0)
+    session = snapshot.get("market_session", "regular")
+    vwap_note = ""
+    if vwap and price:
+        vwap_note = f"\nVWAP: ${vwap:.2f}  Current: ${price:.2f}  {'ABOVE' if price > vwap else 'BELOW'} VWAP  Session: {session}"
 
     return {
         **state,
-        "news_context": news,
+        "news_context": news + vwap_note,
         "options_flow_context": flow,
         "macro_context": macro + ("\n" + macro_lessons if macro_lessons else ""),
         "memory_context": memory,

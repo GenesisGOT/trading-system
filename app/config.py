@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     mem0_api_key: Optional[str] = None              # free at app.mem0.ai
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
-    loop_interval_minutes: int = 60
+    loop_interval_minutes: int = 60        # full market scan interval
+    crypto_loop_interval_minutes: int = 20 # crypto-only loop (runs 24/7)
     analysis_date_override: Optional[str] = None
     max_debate_rounds: int = 2
     max_risk_rounds: int = 1

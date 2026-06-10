@@ -18,6 +18,9 @@ from typing import Optional, Tuple
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+import pytz
+from datetime import datetime
+
 from app.config import settings
 from app.database import (
     get_daily_trade_count,
@@ -174,6 +177,40 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
     )
 
 
+# ── Session detection ─────────────────────────────────────────────────────────
+
+def _get_session() -> str:
+    """Return current market session: pre_market | regular | after_hours | closed | crypto_only."""
+    et = pytz.timezone("America/New_York")
+    now = datetime.now(et)
+    weekday = now.weekday()  # 0=Mon, 6=Sun
+
+    if weekday >= 5:  # Weekend
+        return "crypto_only"
+
+    hour = now.hour + now.minute / 60
+    if 7 <= hour < 9.5:
+        return "pre_market"
+    if 9.5 <= hour < 16:
+        return "regular"
+    if 16 <= hour < 20:
+        return "after_hours"
+    return "crypto_only"
+
+
+def _should_analyze(ticker: str, asset_type: str, session: str) -> bool:
+    """Gate which assets trade in which sessions."""
+    if asset_type == "crypto":
+        return True  # crypto 24/7
+    if asset_type == "prediction":
+        return True  # prediction markets run continuously
+    if session == "crypto_only":
+        return False  # stocks/options closed on weekends + overnight
+    if session in ("pre_market", "after_hours"):
+        return True  # Robinhood supports extended hours for stocks
+    return True  # regular hours — everything runs
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 async def _run_loop() -> None:
@@ -192,10 +229,19 @@ async def _run_loop() -> None:
         log.error("Scanner failed: %s — falling back to config symbols", exc)
         symbols = [(s, "stock") for s in settings.allowed_symbols]
 
-    log.info("Analyzing %d symbols: %s", len(symbols), symbols)
-    notify_scan_start([f"{t}({a})" for t, a in symbols])
+    session = _get_session()
+    log.info("Market session: %s", session)
 
-    for ticker, asset_type in symbols:
+    # Filter symbols by session
+    tradeable = [(t, a) for t, a in symbols if _should_analyze(t, a, session)]
+    skipped = len(symbols) - len(tradeable)
+    if skipped:
+        log.info("Skipping %d symbols (session=%s, crypto/prediction still active)", skipped, session)
+
+    log.info("Analyzing %d symbols: %s", len(tradeable), tradeable)
+    notify_scan_start([f"{t}({a})" for t, a in tradeable], session=session)
+
+    for ticker, asset_type in tradeable:
         try:
             await _process_symbol(run_id, ticker, asset_type)
         except Exception as exc:
@@ -230,20 +276,56 @@ def is_halted() -> bool:
 
 # ── Scheduler lifecycle ───────────────────────────────────────────────────────
 
+async def _run_crypto_loop() -> None:
+    """Faster loop for crypto-only during off-hours."""
+    if _halted:
+        return
+    run_id = str(uuid.uuid4())[:8]
+    try:
+        from app.scanner import scan_market
+        symbols = await asyncio.to_thread(scan_market)
+    except Exception:
+        return
+    crypto_symbols = [(t, a) for t, a in symbols if a == "crypto"]
+    if not crypto_symbols:
+        return
+    log.info("[crypto-loop] run_id=%s symbols=%s", run_id, crypto_symbols)
+    for ticker, asset_type in crypto_symbols:
+        try:
+            await _process_symbol(run_id, ticker, asset_type)
+        except Exception as exc:
+            log.error("Crypto loop error on %s: %s", ticker, exc)
+
+
 def start_scheduler() -> None:
     global _scheduler
     _scheduler = AsyncIOScheduler()
+
+    # Main loop — all assets, session-aware
     _scheduler.add_job(
         _run_loop,
         trigger=IntervalTrigger(minutes=settings.loop_interval_minutes),
         id="agent_loop",
-        name="TradingAgents loop",
+        name="Full market loop",
         replace_existing=True,
         misfire_grace_time=300,
         max_instances=1,
     )
+
+    # Faster crypto loop — runs every 20 min 24/7
+    _scheduler.add_job(
+        _run_crypto_loop,
+        trigger=IntervalTrigger(minutes=settings.crypto_loop_interval_minutes),
+        id="crypto_loop",
+        name="Crypto 24/7 loop",
+        replace_existing=True,
+        misfire_grace_time=120,
+        max_instances=1,
+    )
+
     _scheduler.start()
-    log.info("Scheduler started — interval=%dmin", settings.loop_interval_minutes)
+    log.info("Scheduler started — main=%dmin crypto=%dmin",
+             settings.loop_interval_minutes, settings.crypto_loop_interval_minutes)
 
 
 def stop_scheduler() -> None:

@@ -131,8 +131,9 @@ def notify_trade(
     notify(msg)
 
 
-def notify_scan_start(tickers: list) -> None:
-    notify(f"🔍 *Market Scan* — analyzing: `{'`, `'.join(tickers)}`")
+def notify_scan_start(tickers: list, session: str = "regular") -> None:
+    session_emoji = {"pre_market": "🌅", "regular": "📊", "after_hours": "🌙", "crypto_only": "₿"}.get(session, "📊")
+    notify(f"{session_emoji} *Market Scan* `{session}` — analyzing: `{'`, `'.join(tickers)}`")
 
 
 def notify_halt(reason: str) -> None:
