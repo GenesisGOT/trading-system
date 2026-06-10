@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
 
+    # ── External Alpha Data ───────────────────────────────────────────────────
+    unusual_whales_api_key: Optional[str] = None       # unusualwhales.com — options flow
+
+    # ── Risk Controls ─────────────────────────────────────────────────────────
+    max_drawdown_halt_pct: float = 0.05    # halt if portfolio drops 5% in a day
+    correlation_max_overlap: float = 0.75  # block new BUY if existing position correlation > 0.75
+
     # ── Webhooks ──────────────────────────────────────────────────────────────
     tradingview_webhook_secret: Optional[str] = None   # set to lock down /webhook/tradingview
 

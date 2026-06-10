@@ -113,6 +113,16 @@ def kelly_size(
     if asset_type == "crypto":
         fractional *= 0.6
 
+    # Apply market regime multiplier
+    try:
+        from app.agents.tools.regime import get_market_regime
+        regime = get_market_regime()
+        fractional *= regime.kelly_mult
+        if regime.kelly_mult < 1.0:
+            log.info("[%s] Regime=%s applying %.1fx Kelly multiplier", ticker, regime.regime, regime.kelly_mult)
+    except Exception:
+        pass
+
     notional = round(buying_power * fractional, 2)
     notional = max(notional, MIN_ORDER_USD)
 

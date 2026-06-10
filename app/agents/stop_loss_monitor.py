@@ -269,5 +269,23 @@ async def check_stops() -> None:
 
             remove_stop(ticker)
 
+            # Post-mortem self-improvement analysis (async, best-effort)
+            try:
+                import asyncio
+                from app.agents.postmortem import run_postmortem
+                asyncio.create_task(asyncio.to_thread(
+                    run_postmortem,
+                    ticker=ticker,
+                    asset_type=pos.asset_type,
+                    side=pos.side,
+                    entry_price=pos.entry_price,
+                    exit_price=current_price,
+                    entry_date=pos.opened_at[:10],
+                    exit_reason=reason,
+                    peak_price=pos.high_water,
+                ))
+            except Exception:
+                pass
+
         except Exception as exc:
             log.error("[%s] Stop check failed: %s", ticker, exc)

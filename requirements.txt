@@ -50,5 +50,16 @@ riskfolio-lib>=6.0.0
 # Technical analysis library (TA-Lib pure Python fallback)
 pandas-ta>=0.3.14b
 
+# Market regime detection (Hidden Markov Model)
+hmmlearn>=0.3.2
+scikit-learn>=1.4.0
+
+# SEC EDGAR insider trades
+edgartools>=2.20.0
+
+# Backtesting
+vectorbt>=0.26.2
+
 # Utilities
 python-dotenv>=1.0.1
+numpy>=1.26.0

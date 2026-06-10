@@ -155,7 +155,18 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
         )
         return
 
-    # ── 7. Daily cap check ────────────────────────────────────────────────
+    # ── 7. Correlation filter — skip BUY if already holding a correlated position ─
+    if result.action == "BUY" and _is_correlated_with_existing(ticker, asset_type):
+        log.info("[%s] Skipping BUY — highly correlated with existing open position", ticker)
+        log_execution(
+            decision_id=decision_id, ticker=ticker, side="buy",
+            quantity=0, notional_usd=None, order_id=None,
+            status="blocked", block_reason="Correlation filter: similar position already open",
+            broker_response=None,
+        )
+        return
+
+    # ── 8. Daily cap check ───────────────────────────────────────────────────
     daily = get_daily_trade_count()
     if settings.mandate_max_trades_per_day < 999 and daily >= settings.mandate_max_trades_per_day:
         reason = f"Daily cap reached ({daily}/{settings.mandate_max_trades_per_day})"
@@ -256,9 +267,71 @@ def _should_analyze(ticker: str, asset_type: str, session: str) -> bool:
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
+def _check_drawdown_circuit_breaker() -> bool:
+    """Auto-halt if portfolio drawdown exceeds threshold today. Returns True if halted."""
+    try:
+        from app.broker.robinhood_mcp import robinhood
+        account = robinhood.get_account()
+        equity  = float(account.get("equity", 0) or 0)
+        prev_eq = float(account.get("equity_previous_close", equity) or equity)
+        if prev_eq <= 0 or equity <= 0:
+            return False
+        drawdown = (equity - prev_eq) / prev_eq
+        threshold = -abs(settings.max_drawdown_halt_pct)
+        if drawdown <= threshold:
+            reason = f"Max drawdown circuit breaker: {drawdown:.1%} (threshold {threshold:.1%})"
+            log.warning(reason)
+            halt(reason)
+            return True
+    except Exception as exc:
+        log.debug("Circuit breaker check failed: %s", exc)
+    return False
+
+
+def _is_correlated_with_existing(ticker: str, asset_type: str) -> bool:
+    """Return True if ticker is highly correlated with an already-open position."""
+    if asset_type != "stock":
+        return False
+    try:
+        from app.agents.stop_loss_monitor import get_open_stops
+        open_tickers = [p.ticker for p in get_open_stops() if p.asset_type == "stock" and p.ticker != ticker]
+        if not open_tickers:
+            return False
+
+        import yfinance as yf
+        import pandas as pd
+        symbols = [ticker] + open_tickers
+        df = yf.download(symbols, period="60d", interval="1d", progress=False, auto_adjust=True)
+        if df.empty:
+            return False
+
+        close = df["Close"] if "Close" in df.columns else df.xs("Close", axis=1, level=0)
+        if isinstance(close, pd.Series):
+            return False
+
+        corr = close.pct_change().corr()
+        if ticker not in corr.columns:
+            return False
+
+        for existing in open_tickers:
+            if existing in corr.columns:
+                c = float(corr.loc[ticker, existing])
+                if c >= settings.correlation_max_overlap:
+                    log.info("[%s] Correlated %.2f with open position %s — skipping", ticker, c, existing)
+                    return True
+    except Exception as exc:
+        log.debug("Correlation check failed: %s", exc)
+    return False
+
+
 async def _run_loop() -> None:
     if _halted:
         log.info("Loop skipped — halted")
+        return
+
+    # Circuit breaker — auto-halt on excessive drawdown
+    if _check_drawdown_circuit_breaker():
+        log.warning("Circuit breaker triggered — loop aborted")
         return
 
     run_id = str(uuid.uuid4())[:8]

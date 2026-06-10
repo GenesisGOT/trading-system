@@ -315,3 +315,42 @@ async def tradingview_webhook(alert: TradingViewAlert):
 
     asyncio.create_task(_process_symbol(run_id, alert.ticker.upper(), alert.asset_type))
     return {"status": "queued", "ticker": alert.ticker, "action": alert.action, "run_id": run_id}
+
+
+# ── Backtest ──────────────────────────────────────────────────────────────────
+
+@app.get("/backtest/{ticker}")
+async def backtest(ticker: str, period: str = "1y", asset_type: str = "stock"):
+    """Run a backtest on historical data for a ticker and return performance stats."""
+    from app.backtesting import run_backtest
+    result = await asyncio.to_thread(run_backtest, ticker.upper(), period, asset_type)
+    if not result:
+        raise HTTPException(status_code=500, detail="Backtest failed — check logs")
+    return {
+        "ticker": result.ticker,
+        "period": result.period,
+        "total_return": result.total_return,
+        "sharpe_ratio": result.sharpe_ratio,
+        "max_drawdown": result.max_drawdown,
+        "win_rate": result.win_rate,
+        "total_trades": result.total_trades,
+        "avg_trade_return": result.avg_trade_return,
+        "best_trade": result.best_trade,
+        "worst_trade": result.worst_trade,
+        "summary": result.summary,
+    }
+
+
+@app.get("/regime")
+async def market_regime():
+    """Return current market regime (bull/neutral/bear/crash) and Kelly multiplier."""
+    from app.agents.tools.regime import get_market_regime
+    r = await asyncio.to_thread(get_market_regime)
+    return {
+        "regime": r.regime,
+        "vix": r.vix,
+        "spy_return_5d": r.spy_return_5d,
+        "confidence": r.confidence,
+        "kelly_multiplier": r.kelly_mult,
+        "description": r.description,
+    }

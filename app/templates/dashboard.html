@@ -69,6 +69,7 @@
   <div class="card"><div class="card-label">Fear & Greed</div><div class="card-value" id="stat-fg">—</div></div>
   <div class="card"><div class="card-label">Win Rate (30d)</div><div class="card-value" id="stat-wr">—</div></div>
   <div class="card"><div class="card-label">Buying Power</div><div class="card-value" id="stat-bp">—</div></div>
+  <div class="card"><div class="card-label">Market Regime</div><div class="card-value" id="stat-regime" style="font-size:14px">—</div></div>
 </div>
 
 <div class="controls">
@@ -250,6 +251,19 @@ async function loadMetrics() {
   } catch(e) {}
 }
 
+async function loadRegime() {
+  try {
+    const r = await fetch(BASE + '/regime');
+    const d = await r.json();
+    const el = document.getElementById('stat-regime');
+    const colors = {bull:'green', neutral:'yellow', bear:'red', crash:'red'};
+    const icons  = {bull:'🟢', neutral:'🟡', bear:'🔴', crash:'💀'};
+    el.textContent = (icons[d.regime]||'') + ' ' + (d.regime||'').toUpperCase();
+    el.className = 'card-value ' + (colors[d.regime] || 'yellow');
+    el.title = d.description || '';
+  } catch(e) {}
+}
+
 async function triggerRun() {
   try {
     const r = await fetch(BASE + '/trigger', {method:'POST'});
@@ -275,7 +289,7 @@ async function resumeTrading() {
 }
 
 async function loadAll() {
-  await Promise.all([loadStatus(), loadStops(), loadDecisions(), loadExecutions(), loadMetrics()]);
+  await Promise.all([loadStatus(), loadStops(), loadDecisions(), loadExecutions(), loadMetrics(), loadRegime()]);
 }
 
 loadAll();

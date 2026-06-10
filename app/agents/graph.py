@@ -139,6 +139,9 @@ def node_enrich(state: dict) -> dict:
     from app.agents.tools.earnings import get_earnings_context
     from app.agents.tools.multiframe import get_multiframe_analysis
     from app.agents.tools.market_sentiment import get_macro_sentiment, get_ticker_crowd_sentiment
+    from app.agents.tools.regime import get_regime_as_context
+    from app.agents.tools.insider import get_insider_activity
+    from app.agents.tools.unusual_whales import get_options_flow as get_uw_flow
 
     # Live market context from Robinhood (price, volume, VWAP, position, buying power, session)
     snapshot = robinhood.get_market_context(ticker, asset_type)
@@ -155,6 +158,15 @@ def node_enrich(state: dict) -> dict:
 
     # Earnings calendar warning
     earnings_ctx = get_earnings_context(ticker) if asset_type == "stock" else ""
+
+    # Market regime (VIX + HMM)
+    regime_ctx = get_regime_as_context()
+
+    # SEC insider activity (stocks only)
+    insider_ctx = get_insider_activity(ticker) if asset_type == "stock" else ""
+
+    # Unusual Whales options flow (replaces/augments basic options flow)
+    uw_flow = get_uw_flow(ticker) if asset_type in ("stock", "option") else ""
 
     # Block trade if already holding and action would be a duplicate BUY
     if snapshot.get("already_holding"):
@@ -187,15 +199,16 @@ def node_enrich(state: dict) -> dict:
         vwap_note = f"\nVWAP: ${vwap:.2f}  Current: ${price:.2f}  {'ABOVE' if price > vwap else 'BELOW'} VWAP  Session: {session}"
 
     # Combine all context for news analyst
-    full_news = "\n\n".join(filter(None, [news, vwap_note, indicators, mtf_text, earnings_ctx, crowd_sentiment]))
+    full_news = "\n\n".join(filter(None, [news, vwap_note, indicators, mtf_text, earnings_ctx, crowd_sentiment, insider_ctx]))
 
     return {
         **state,
         "news_context": full_news,
         "options_flow_context": flow,
-        "macro_context": "\n\n".join(filter(None, [macro, macro_lessons, macro_sentiment])),
+        "macro_context": "\n\n".join(filter(None, [macro, macro_lessons, macro_sentiment, regime_ctx])),
         "memory_context": memory,
         "market_snapshot": {**snapshot, "mtf_confluence": mtf_confluence},
+        "options_flow_context": uw_flow or state.get("options_flow_context", ""),
     }
 
 
