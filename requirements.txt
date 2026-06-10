@@ -60,6 +60,9 @@ edgartools>=2.20.0
 # Backtesting
 vectorbt>=0.26.2
 
+# Alpaca broker (paper + live trading)
+alpaca-py>=0.38.0
+
 # Utilities
 python-dotenv>=1.0.1
 numpy>=1.26.0

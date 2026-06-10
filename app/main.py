@@ -341,6 +341,21 @@ async def backtest(ticker: str, period: str = "1y", asset_type: str = "stock"):
     }
 
 
+@app.get("/portfolio")
+async def get_portfolio():
+    """Return full portfolio summary from the active broker (Alpaca or Robinhood)."""
+    if settings.broker == "alpaca":
+        from app.broker.alpaca_connector import get_portfolio_summary
+        return await asyncio.to_thread(get_portfolio_summary)
+    from app.broker.robinhood_mcp import robinhood
+    try:
+        account   = robinhood.get_account()
+        positions = robinhood.get_positions()
+        return {"account": account, "positions": positions, "broker": "robinhood"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/regime")
 async def market_regime():
     """Return current market regime (bull/neutral/bear/crash) and Kelly multiplier."""

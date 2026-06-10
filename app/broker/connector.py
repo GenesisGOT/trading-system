@@ -131,15 +131,40 @@ class BrokerConnector:
             log.warning("Local mandate blocked %s %s: %s", side, ticker, block)
             return OrderResult(status="blocked", order_id=None, block_reason=block, broker_response=None)
 
+        # Route to Alpaca if configured
+        if settings.broker == "alpaca":
+            return self._alpaca_place_order(ticker, side, quantity, notional_usd, asset_type)
+
         if not self._sdk_available:
             return OrderResult(
                 status="error",
                 order_id=None,
-                block_reason="Vibe-Trading SDK not available",
+                block_reason="Vibe-Trading SDK not available — set BROKER=alpaca for paper trading",
                 broker_response=None,
             )
 
         return self._sdk_place_order(ticker, side, quantity, notional_usd)
+
+    def _alpaca_place_order(
+        self,
+        ticker: str,
+        side: str,
+        quantity: float,
+        notional_usd: Optional[float],
+        asset_type: str = "stock",
+    ) -> OrderResult:
+        try:
+            from app.broker.alpaca_connector import place_order as alpaca_order
+            result = alpaca_order(ticker, side, quantity, notional_usd, asset_type)
+            return OrderResult(
+                status=result["status"],
+                order_id=result.get("order_id"),
+                block_reason=result.get("block_reason"),
+                broker_response=result.get("broker_response"),
+            )
+        except Exception as exc:
+            log.error("Alpaca order failed for %s %s: %s", side, ticker, exc)
+            return OrderResult(status="error", order_id=None, block_reason=str(exc), broker_response=None)
 
     def _sdk_place_order(
         self,
@@ -217,13 +242,23 @@ class BrokerConnector:
                 pass
         return False
 
+    def get_market_context(self, ticker: str, asset_type: str = "stock") -> dict:
+        """Route market context to the active broker."""
+        if settings.broker == "alpaca":
+            from app.broker.alpaca_connector import get_market_context
+            return get_market_context(ticker, asset_type)
+        from app.broker.robinhood_mcp import robinhood
+        return robinhood.get_market_context(ticker, asset_type)
+
     def status(self) -> Dict[str, Any]:
+        alpaca_paper = getattr(settings, "alpaca_paper", True)
         return {
             "sdk_available": self._sdk_available,
             "mandate_loaded": self._mandate is not None,
             "halted": self.is_halted(),
             "dry_run": settings.dry_run,
-            "broker": BROKER,
+            "broker": settings.broker,
+            "alpaca_paper_mode": alpaca_paper if settings.broker == "alpaca" else None,
             "allowed_symbols": settings.allowed_symbols,
             "mandate_max_order_usd": settings.mandate_max_order_usd,
             "mandate_daily_cap_usd": settings.mandate_daily_cap_usd,

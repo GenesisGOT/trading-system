@@ -57,6 +57,14 @@ class Settings(BaseSettings):
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
 
+    # ── Alpaca (paper + live trading) ────────────────────────────────────────
+    alpaca_api_key: Optional[str] = None
+    alpaca_api_secret: Optional[str] = None
+    alpaca_paper: bool = True              # True = paper, False = live
+
+    # ── Broker selection ──────────────────────────────────────────────────────
+    broker: str = "robinhood"              # robinhood | alpaca
+
     # ── External Alpha Data ───────────────────────────────────────────────────
     unusual_whales_api_key: Optional[str] = None       # unusualwhales.com — options flow
 
