@@ -94,10 +94,7 @@ def _scan_crypto() -> List[Tuple[str, str]]:
     enabled = [s.strip().upper() for s in settings.scanner_crypto_symbols.split(",") if s.strip()]
     if not enabled:
         return []
-
-    # Always include top 2 from watchlist that are enabled
-    result = [(s, "crypto") for s in enabled[:2]]
-    return result
+    return [(s, "crypto") for s in enabled]
 
 
 def _scan_options() -> List[Tuple[str, str]]:

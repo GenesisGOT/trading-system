@@ -227,7 +227,8 @@ async def _run_loop() -> None:
         symbols = await asyncio.to_thread(scan_market)
     except Exception as exc:
         log.error("Scanner failed: %s — falling back to config symbols", exc)
-        symbols = [(s, "stock") for s in settings.allowed_symbols]
+        crypto = [s.strip().upper() for s in settings.scanner_crypto_symbols.split(",") if s.strip()]
+        symbols = [(s, "stock") for s in settings.allowed_symbols] + [(s, "crypto") for s in crypto]
 
     session = _get_session()
     log.info("Market session: %s", session)
