@@ -20,10 +20,6 @@ RUN git clone --depth=1 https://github.com/HKUDS/Vibe-Trading.git /opt/Vibe-Trad
 # fails (e.g. missing optional deps); the SDK availability check in
 # broker/connector.py will degrade gracefully to dry-run mode.
 
-# ── Install pandas-ta from source (no PyPI release for Python 3.11+) ─────────
-RUN git clone --depth=1 https://github.com/twopirllc/pandas-ta.git /opt/pandas-ta \
-    && pip install --no-cache-dir /opt/pandas-ta
-
 # ── Install our app dependencies ──────────────────────────────────────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
