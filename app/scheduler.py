@@ -284,15 +284,11 @@ def _get_session() -> str:
 
 def _should_analyze(ticker: str, asset_type: str, session: str) -> bool:
     """Gate which assets trade in which sessions."""
-    if asset_type == "crypto":
-        return True  # crypto 24/7
-    if asset_type == "prediction":
-        return True  # prediction markets run continuously
+    if asset_type in ("crypto", "prediction"):
+        return True  # 24/7
     if session == "crypto_only":
         return False  # stocks/options closed on weekends + overnight
-    if session in ("pre_market", "after_hours"):
-        return True  # Robinhood supports extended hours for stocks
-    return True  # regular hours — everything runs
+    return True  # pre_market, after_hours, regular — all run
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -398,11 +394,12 @@ async def _run_loop(resume: bool = False) -> None:
         # Persist all symbols upfront so restarts can resume
         save_scan_symbols(run_id, tradeable)
 
-    log.info("Analyzing %d symbols in parallel: %s", len(tradeable), tradeable)
-    notify_scan_start([f"{t}({a})" for t, a in tradeable], session=_get_session())
+    session = _get_session()
+    notify_scan_start([f"{t}({a})" for t, a in tradeable], session=session)
+
     try:
-        from app.scan_feed import emit_scan_start
-        emit_scan_start(run_id, [f"{t}({a})" for t, a in tradeable], _get_session())
+        from app.scan_feed import emit_scan_start, emit_category_start, emit_category_complete
+        emit_scan_start(run_id, [f"{t}({a})" for t, a in tradeable], session)
     except Exception:
         pass
 
@@ -412,14 +409,44 @@ async def _run_loop(resume: bool = False) -> None:
         except Exception as exc:
             log.error("Unexpected error on %s: %s", ticker, exc, exc_info=True)
             notify_error(ticker, str(exc))
+            try:
+                from app.scan_feed import emit_error
+                emit_error(ticker, str(exc))
+            except Exception:
+                pass
 
-    await asyncio.gather(*[_safe_process(t, a) for t, a in tradeable])
+    # ── Scan category by category, emitting picks between each wave ───────
+    CATEGORY_ORDER = ["prediction", "crypto", "stock", "option"]
 
-    log.info("=== Loop complete run_id=%s ===", run_id)
+    total_analyzed = 0
+    for category in CATEGORY_ORDER:
+        batch = [(t, a) for t, a in tradeable if a == category]
+        if not batch:
+            continue
+
+        log.info("=== Category wave: %s (%d tickers) ===", category, len(batch))
+        try:
+            from app.scan_feed import emit_category_start, emit_category_complete
+            emit_category_start(run_id, category, [t for t, _ in batch])
+        except Exception:
+            pass
+
+        await asyncio.gather(*[_safe_process(t, a) for t, a in batch])
+        total_analyzed += len(batch)
+
+        try:
+            from app.scan_feed import emit_category_complete
+            emit_category_complete(run_id, category, len(batch))
+        except Exception:
+            pass
+
+        log.info("=== Category wave complete: %s ===", category)
+
+    log.info("=== Loop complete run_id=%s (%d analyzed) ===", run_id, total_analyzed)
     log_system_event("loop_complete", f"run_id={run_id}")
     try:
         from app.scan_feed import emit_scan_complete
-        emit_scan_complete(run_id, len(tradeable))
+        emit_scan_complete(run_id, total_analyzed)
     except Exception:
         pass
 

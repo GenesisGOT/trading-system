@@ -278,6 +278,7 @@ interface FeedEvent {
   session?: string
   count?: number
   error?: string
+  category?: string
 }
 
 export default function App() {
@@ -565,39 +566,48 @@ export default function App() {
                   Waiting for scan events — hit <span className="text-terminal-green">Scan</span> to start
                 </div>
               )}
-              {feedEvents.map((ev, i) => (
+              {feedEvents.map((ev, i) => {
+                const categoryColors: Record<string, string> = {
+                  prediction: 'text-purple-400', crypto: 'text-terminal-cyan',
+                  stock: 'text-terminal-green', option: 'text-yellow-400',
+                }
+                const catColor = categoryColors[ev.category as string] || 'text-terminal-muted'
+                return (
                 <div key={i} className={clx(
                   'flex items-start gap-3 px-3 py-1.5 rounded border-l-2',
-                  ev.type === 'scan_start'    && 'border-terminal-cyan bg-blue-950/20',
-                  ev.type === 'ticker_start'  && 'border-terminal-yellow bg-yellow-950/10',
-                  ev.type === 'decision'      && ev.action === 'BUY'  && 'border-terminal-green bg-green-950/20',
-                  ev.type === 'decision'      && ev.action === 'SELL' && 'border-terminal-red bg-red-950/20',
-                  ev.type === 'decision'      && ev.action === 'HOLD' && 'border-terminal-border bg-terminal-surface',
-                  ev.type === 'scan_complete' && 'border-terminal-green bg-green-950/10',
-                  ev.type === 'analyst'       && 'border-terminal-border bg-transparent',
-                  ev.type === 'error'         && 'border-terminal-red bg-red-950/20',
+                  ev.type === 'scan_start'        && 'border-terminal-cyan bg-blue-950/20',
+                  ev.type === 'category_start'    && 'border-purple-500 bg-purple-950/20',
+                  ev.type === 'category_complete' && 'border-terminal-border bg-terminal-surface/50',
+                  ev.type === 'ticker_start'      && 'border-yellow-700 bg-yellow-950/10',
+                  ev.type === 'decision' && ev.action === 'BUY'  && 'border-terminal-green bg-green-950/20',
+                  ev.type === 'decision' && ev.action === 'SELL' && 'border-terminal-red bg-red-950/20',
+                  ev.type === 'decision' && ev.action === 'HOLD' && 'border-terminal-border bg-terminal-surface',
+                  ev.type === 'scan_complete'     && 'border-terminal-green bg-green-950/10',
+                  ev.type === 'error'             && 'border-terminal-red bg-red-950/20',
                 )}>
                   <span className="text-terminal-muted shrink-0 w-16">{ev.ts}</span>
-                  <span className="shrink-0 w-20">
-                    {ev.type === 'scan_start'    && <span className="text-terminal-cyan">SCAN START</span>}
-                    {ev.type === 'ticker_start'  && <span className="text-yellow-400">▶ {ev.ticker}</span>}
-                    {ev.type === 'analyst'       && <span className="text-terminal-muted">  {ev.ticker}</span>}
-                    {ev.type === 'decision'      && (
+                  <span className="shrink-0 w-28">
+                    {ev.type === 'scan_start'        && <span className="text-terminal-cyan font-bold">◈ SCAN START</span>}
+                    {ev.type === 'category_start'    && <span className={clx('font-bold uppercase', catColor)}>▸ {ev.category}</span>}
+                    {ev.type === 'category_complete' && <span className={clx('uppercase', catColor)}>✓ {ev.category}</span>}
+                    {ev.type === 'ticker_start'      && <span className="text-yellow-400">▶ {ev.ticker}</span>}
+                    {ev.type === 'decision' && (
                       <span className={ev.action === 'BUY' ? 'text-terminal-green font-bold' : ev.action === 'SELL' ? 'text-terminal-red font-bold' : 'text-terminal-muted'}>
                         {ev.action} {ev.ticker}
                       </span>
                     )}
-                    {ev.type === 'scan_complete' && <span className="text-terminal-green">✓ DONE</span>}
-                    {ev.type === 'error'         && <span className="text-terminal-red">✗ ERROR</span>}
+                    {ev.type === 'scan_complete' && <span className="text-terminal-green font-bold">◈ COMPLETE</span>}
+                    {ev.type === 'error'         && <span className="text-terminal-red">✗ {ev.ticker}</span>}
                   </span>
                   <span className="text-terminal-muted flex-1 truncate">
-                    {ev.type === 'scan_start'    && `${ev.tickers?.join(', ')} · ${ev.session}`}
-                    {ev.type === 'ticker_start'  && `${ev.asset_type} · analyzing...`}
-                    {ev.type === 'analyst'       && `${ev.analyst} analyst · ${ev.status}`}
-                    {ev.type === 'decision'      && (
+                    {ev.type === 'scan_start'        && `${ev.tickers?.length} tickers · ${ev.session}`}
+                    {ev.type === 'category_start'    && `scanning ${(ev.tickers as string[])?.join(', ')}`}
+                    {ev.type === 'category_complete' && `${ev.count} picks returned`}
+                    {ev.type === 'ticker_start'      && `${ev.asset_type} · analyzing...`}
+                    {ev.type === 'decision' && (
                       <span>
-                        <span className="text-white">{(ev.confidence! * 100).toFixed(0)}% conf</span>
-                        {' · '}{ev.rating}
+                        <span className="text-white font-semibold">{(ev.confidence! * 100).toFixed(0)}%</span>
+                        {' conf · '}{ev.rating}
                         {ev.thesis && <span className="text-terminal-muted"> · {ev.thesis}</span>}
                       </span>
                     )}
@@ -605,7 +615,8 @@ export default function App() {
                     {ev.type === 'error'         && <span className="text-terminal-red">{ev.error}</span>}
                   </span>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}

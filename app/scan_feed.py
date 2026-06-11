@@ -67,5 +67,13 @@ def emit_scan_complete(run_id: str, count: int) -> None:
     emit("scan_complete", {"run_id": run_id, "count": count})
 
 
+def emit_category_start(run_id: str, category: str, tickers: list) -> None:
+    emit("category_start", {"run_id": run_id, "category": category, "tickers": tickers})
+
+
+def emit_category_complete(run_id: str, category: str, count: int) -> None:
+    emit("category_complete", {"run_id": run_id, "category": category, "count": count})
+
+
 def emit_error(ticker: str, error: str) -> None:
     emit("error", {"ticker": ticker, "error": str(error)[:200]})
