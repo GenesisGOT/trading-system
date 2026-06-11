@@ -63,6 +63,10 @@ vectorbt>=0.26.2
 # Alpaca broker (paper + live trading)
 alpaca-py>=0.38.0
 
+# FinBERT sentiment (ProsusAI/finbert via HuggingFace)
+transformers>=4.40.0
+torch>=2.2.0
+
 # Utilities
 python-dotenv>=1.0.1
 numpy>=1.26.0

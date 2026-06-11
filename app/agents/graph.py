@@ -172,22 +172,29 @@ def node_enrich(state: dict) -> dict:
     if snapshot.get("already_holding"):
         log.info("[%s] Already holding position — agents will factor this in", ticker)
 
-    # Asset-specific Tavily search
+    # Robinhood news (primary source) + Tavily fallback
+    from app.scanner import get_robinhood_news, get_robinhood_market_news
+    rh_news = get_robinhood_news(ticker)
+
     if asset_type == "crypto":
-        news = search_ticker_news(ticker, f"{ticker} crypto price prediction sentiment on-chain funding rate")
+        tavily_news = search_ticker_news(ticker, f"{ticker} crypto price prediction sentiment on-chain funding rate")
         flow = search_ticker_news(ticker, f"{ticker} whale large transaction exchange flow")
     elif asset_type == "option":
         underlying = ticker.split("_")[0] if "_" in ticker else ticker
-        news = search_ticker_news(underlying, f"{underlying} options implied volatility earnings catalyst")
+        tavily_news = search_ticker_news(underlying, f"{underlying} options implied volatility earnings catalyst")
         flow = search_options_flow(underlying)
     elif asset_type == "prediction":
-        news = search_ticker_news(ticker, f"{ticker} prediction market odds probability event")
+        tavily_news = search_ticker_news(ticker, f"{ticker} prediction market odds probability event")
         flow = ""
     else:
-        news = search_ticker_news(ticker)
+        tavily_news = search_ticker_news(ticker)
         flow = search_options_flow(ticker)
 
+    # Robinhood news takes priority; Tavily fills gaps
+    news = "\n\n".join(filter(None, [rh_news, tavily_news]))
+
     macro = search_macro_context()
+    rh_market_news = get_robinhood_market_news()
     memory = recall_ticker(ticker)
     macro_lessons = recall_macro_lessons()
 
@@ -205,14 +212,21 @@ def node_enrich(state: dict) -> dict:
     if vwap and price:
         vwap_note = f"\nVWAP: ${vwap:.2f}  Current: ${price:.2f}  {'ABOVE' if price > vwap else 'BELOW'} VWAP  Session: {session}"
 
+    # FinBERT sentiment on Robinhood news headlines
+    try:
+        from app.agents.tools.finbert import get_finbert_signal
+        finbert_signal = get_finbert_signal(news)
+    except Exception:
+        finbert_signal = ""
+
     # Combine all context for news analyst
-    full_news = "\n\n".join(filter(None, [news, vwap_note, indicators, mtf_text, earnings_ctx, crowd_sentiment, insider_ctx]))
+    full_news = "\n\n".join(filter(None, [news, finbert_signal, vwap_note, indicators, mtf_text, earnings_ctx, crowd_sentiment, insider_ctx]))
 
     return {
         **state,
         "news_context": full_news,
         "options_flow_context": flow,
-        "macro_context": "\n\n".join(filter(None, [macro, macro_lessons, macro_sentiment, regime_ctx])),
+        "macro_context": "\n\n".join(filter(None, [macro, rh_market_news, macro_lessons, macro_sentiment, regime_ctx])),
         "memory_context": "\n\n".join(filter(None, [memory, past_research])),
         "market_snapshot": {**snapshot, "mtf_confluence": mtf_confluence},
         "options_flow_context": uw_flow or state.get("options_flow_context", ""),

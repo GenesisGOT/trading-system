@@ -1,141 +1,226 @@
-"""Market scanner — finds top opportunities across stocks, crypto, and options.
+"""Market scanner — Robinhood-first data source.
 
-Each cycle returns a list of (ticker, asset_type) pairs for the graph to analyze.
-
-Sources:
-  Stocks  — Polygon.io top gainers/losers/volume (free tier)
-  Crypto  — Polygon.io crypto snapshots + fixed watchlist
-  Options — Unusual options activity via Tavily search
-  Prediction — fixed watchlist (Robinhood prediction markets)
+Pulls top movers, crypto, options flow, prediction markets, and news
+directly from Robinhood MCP. Falls back to config symbols if MCP unavailable.
 """
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, List, Optional, Tuple
-
-import httpx
 
 from app.config import settings
 
 log = logging.getLogger(__name__)
 
-POLYGON_BASE = "https://api.polygon.io"
+MIN_PRICE  = 2.0
+MIN_VOLUME = 100_000
 
-MIN_PRICE   = 5.0
-MIN_VOLUME  = 500_000
+# Static fallback crypto watchlist
+CRYPTO_WATCHLIST = ["BTC", "ETH", "SOL", "DOGE", "AVAX"]
 
-# Always-on crypto watchlist (Robinhood supports these)
-CRYPTO_WATCHLIST = ["BTC", "ETH", "SOL", "DOGE", "AVAX", "MATIC", "LINK", "UNI"]
-
-# Prediction market contracts on Robinhood (event-based)
-PREDICTION_WATCHLIST: List[str] = []  # populate from .env PREDICTION_SYMBOLS
-
-
-def _headers() -> Dict[str, str]:
-    return {"Authorization": f"Bearer {settings.polygon_api_key}"}
-
-
-def _get(path: str, params: dict | None = None) -> Optional[dict]:
-    try:
-        r = httpx.get(
-            f"{POLYGON_BASE}{path}",
-            headers=_headers(),
-            params=params or {},
-            timeout=15,
-        )
-        r.raise_for_status()
-        return r.json()
-    except Exception as exc:
-        log.warning("Polygon request failed %s: %s", path, exc)
-        return None
+# Common non-ticker words to filter out of news extraction
+_STOPWORDS = {
+    "THE", "FOR", "AND", "BUT", "NOT", "ARE", "WAS", "HAS", "ITS", "NEW",
+    "ALL", "USD", "ETF", "IPO", "CEO", "CFO", "SEC", "FDA", "EPS", "YOY",
+    "QOQ", "LLC", "INC", "LTD", "EST", "EDT", "PST", "UTC", "API", "GDP",
+    "CPI", "PCE", "NFP", "ATH", "ATL", "ROI", "P&L", "PNL", "YTD", "MTD",
+}
 
 
-def _snapshot_movers(direction: str) -> List[dict]:
-    data = _get(f"/v2/snapshot/locale/us/markets/stocks/{direction}")
-    return (data or {}).get("tickers", [])
+def _rh():
+    from app.broker.robinhood_mcp import robinhood
+    return robinhood
 
 
-def _score(snap: dict) -> float:
-    day  = snap.get("day", {})
-    prev = snap.get("prevDay", {})
-    price      = day.get("c", 0) or 0
-    volume     = day.get("v", 0) or 0
-    prev_close = prev.get("c", 1) or 1
-    change_pct = abs((price - prev_close) / prev_close * 100) if prev_close else 0
-    return (min(volume / 1_000_000, 10) * 0.4) + (min(change_pct, 20) * 0.6)
-
+# ── Stocks ────────────────────────────────────────────────────────────────────
 
 def _scan_stocks() -> List[Tuple[str, str]]:
-    """Return top stock movers as (ticker, 'stock') pairs."""
-    if not settings.polygon_api_key:
-        return [(s, "stock") for s in settings.allowed_symbols]
+    """Pull top movers from Robinhood MCP."""
+    try:
+        rh = _rh()
 
-    gainers = _snapshot_movers("gainers")
-    losers  = _snapshot_movers("losers")
-    candidates = {t["ticker"]: t for t in gainers + losers if t.get("ticker")}
+        # Try Robinhood top movers / most popular
+        movers = rh._call("get_top_movers", {"direction": "up", "limit": 20}) or {}
+        losers = rh._call("get_top_movers", {"direction": "down", "limit": 10}) or {}
+        popular = rh._call("get_most_popular", {"limit": 10}) or {}
 
-    filtered = []
-    for ticker, snap in candidates.items():
-        day = snap.get("day", {})
-        if (day.get("c", 0) or 0) < MIN_PRICE:
-            continue
-        if (day.get("v", 0) or 0) < MIN_VOLUME:
-            continue
-        filtered.append((ticker, _score(snap)))
+        candidates = []
+        for group in [movers, losers, popular]:
+            items = group.get("results", group.get("instruments", []))
+            if isinstance(items, list):
+                for item in items:
+                    sym = (item.get("symbol") or item.get("ticker") or "").upper()
+                    price = float(item.get("price") or item.get("last_trade_price") or 0)
+                    volume = float(item.get("volume") or 0)
+                    if sym and price >= MIN_PRICE and volume >= MIN_VOLUME:
+                        candidates.append(sym)
 
-    filtered.sort(key=lambda x: x[1], reverse=True)
-    max_stocks = max(1, settings.scanner_max_tickers - 2)  # leave room for crypto
-    top = [(t, "stock") for t, _ in filtered[:max_stocks]]
-    return top or [(s, "stock") for s in settings.allowed_symbols]
+        # Deduplicate and cap
+        seen, result = set(), []
+        for sym in candidates:
+            if sym not in seen and sym not in _STOPWORDS:
+                seen.add(sym)
+                result.append((sym, "stock"))
 
+        max_stocks = max(3, settings.scanner_max_tickers - 3)
+        if result:
+            log.info("Robinhood scanner: %d stocks found", len(result))
+            return result[:max_stocks]
+
+    except Exception as exc:
+        log.warning("Robinhood stock scanner failed: %s — using config symbols", exc)
+
+    return [(s, "stock") for s in settings.allowed_symbols]
+
+
+# ── Crypto ────────────────────────────────────────────────────────────────────
 
 def _scan_crypto() -> List[Tuple[str, str]]:
-    """Return active crypto symbols as (ticker, 'crypto') pairs."""
+    """Pull active crypto from Robinhood."""
     enabled = [s.strip().upper() for s in settings.scanner_crypto_symbols.split(",") if s.strip()]
     if not enabled:
         return []
+
+    try:
+        rh = _rh()
+        result = []
+        for sym in enabled:
+            quote = rh.get_crypto_quote(sym)
+            if quote and float(quote.get("price") or quote.get("mark_price") or 0) > 0:
+                result.append((sym, "crypto"))
+        if result:
+            return result
+    except Exception as exc:
+        log.warning("Robinhood crypto scanner failed: %s", exc)
+
     return [(s, "crypto") for s in enabled]
 
 
+# ── Options ───────────────────────────────────────────────────────────────────
+
 def _scan_options() -> List[Tuple[str, str]]:
-    """Find unusual options activity via Tavily. Returns (ticker, 'option') pairs."""
-    if not (settings.scanner_options_enabled and settings.tavily_api_key):
+    """Find unusual options activity via Robinhood options chain data."""
+    if not settings.scanner_options_enabled:
         return []
+
     try:
-        from app.agents.tools.search import search_ticker_news
-        from tavily import TavilyClient
-        client = TavilyClient(api_key=settings.tavily_api_key)
-        result = client.search(
-            query="unusual options activity today high volume calls puts sweep",
-            search_depth="basic",
-            max_results=3,
-            include_answer=True,
-        )
-        # Extract tickers from answer — simple heuristic
-        import re
-        text = result.get("answer", "") + " ".join(r.get("content", "") for r in result.get("results", []))
-        tickers = list(dict.fromkeys(re.findall(r'\b([A-Z]{2,5})\b', text)))
-        # Filter to known symbols (avoid false positives)
-        valid = [t for t in tickers if len(t) >= 2 and t not in
-                 {"THE", "FOR", "AND", "BUT", "NOT", "ARE", "WAS", "HAS", "ITS", "NEW", "ALL",
-                  "USD", "ETF", "IPO", "CEO", "CFO", "SEC", "FDA", "EPS", "YOY", "QOQ"}]
-        return [(t, "option") for t in valid[:2]]
+        rh = _rh()
+        unusual = []
+
+        # Check options chains on our top stock picks for unusual volume
+        stock_picks = [s for s in settings.allowed_symbols[:5]]
+        for ticker in stock_picks:
+            try:
+                chain = rh.get_options_chain(ticker)
+                if not chain:
+                    continue
+                for contract in chain[:20]:
+                    oi = float(contract.get("open_interest") or 0)
+                    vol = float(contract.get("volume") or 0)
+                    if oi > 0 and vol / max(oi, 1) > 2.0:  # volume > 2x open interest = unusual
+                        unusual.append((ticker, "option"))
+                        break
+            except Exception:
+                continue
+
+        return unusual[:2]
+
     except Exception as exc:
         log.warning("Options scanner failed: %s", exc)
         return []
 
 
-def _scan_predictions() -> List[Tuple[str, str]]:
-    """Return prediction market contracts from config."""
-    symbols = [s.strip() for s in settings.prediction_symbols.split(",") if s.strip()]
-    return [(s, "prediction") for s in symbols]
+# ── Prediction Markets ────────────────────────────────────────────────────────
 
+def _scan_predictions() -> List[Tuple[str, str]]:
+    """Pull active prediction market contracts from Robinhood."""
+    # First check config overrides
+    config_symbols = [s.strip() for s in settings.prediction_symbols.split(",") if s.strip()]
+
+    try:
+        rh = _rh()
+        # Try to pull live prediction contracts from Robinhood
+        contracts = rh._call("get_prediction_contracts", {"status": "open"}) or {}
+        items = contracts.get("results", contracts.get("contracts", []))
+
+        if isinstance(items, list) and items:
+            active = []
+            for c in items:
+                sym = (c.get("symbol") or c.get("event_id") or "").upper()
+                vol = float(c.get("volume") or c.get("contracts_traded") or 0)
+                if sym and vol > 100:  # only contracts with real activity
+                    active.append((sym, "prediction"))
+
+            if active:
+                log.info("Robinhood prediction markets: %d active contracts", len(active))
+                return active[:3]
+
+    except Exception as exc:
+        log.warning("Prediction market scanner failed: %s", exc)
+
+    return [(s, "prediction") for s in config_symbols]
+
+
+# ── News scanner ──────────────────────────────────────────────────────────────
+
+def get_robinhood_news(ticker: str) -> str:
+    """Pull news articles directly from Robinhood for a ticker."""
+    try:
+        rh = _rh()
+        result = rh._call("get_news", {"symbol": ticker, "limit": 10}) or {}
+        articles = result.get("results", result.get("news", []))
+
+        if not articles:
+            return ""
+
+        lines = [f"[Robinhood News for {ticker}]"]
+        for a in articles[:8]:
+            title = a.get("title") or a.get("headline") or ""
+            source = a.get("source") or a.get("publisher", {}).get("name") or ""
+            summary = a.get("summary") or a.get("preview_text") or ""
+            published = (a.get("published_at") or a.get("published_utc") or "")[:10]
+            if title:
+                lines.append(f"• [{published}] {source}: {title}")
+                if summary:
+                    lines.append(f"  {summary[:200]}")
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        log.warning("[%s] Robinhood news failed: %s", ticker, exc)
+        return ""
+
+
+def get_robinhood_market_news() -> str:
+    """Pull general market news from Robinhood."""
+    try:
+        rh = _rh()
+        result = rh._call("get_market_news", {"limit": 15}) or {}
+        articles = result.get("results", result.get("news", []))
+
+        if not articles:
+            return ""
+
+        lines = ["[Robinhood Market News]"]
+        for a in articles[:10]:
+            title = a.get("title") or a.get("headline") or ""
+            source = a.get("source") or ""
+            published = (a.get("published_at") or "")[:10]
+            if title:
+                lines.append(f"• [{published}] {source}: {title}")
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        log.warning("Robinhood market news failed: %s", exc)
+        return ""
+
+
+# ── Main scanner ──────────────────────────────────────────────────────────────
 
 def scan_market() -> List[Tuple[str, str]]:
-    """Return top (ticker, asset_type) pairs for this cycle.
-
-    Total capped at scanner_max_tickers. Mix: stocks + crypto + options + predictions.
-    """
+    """Return top (ticker, asset_type) pairs for this cycle from Robinhood."""
     results: List[Tuple[str, str]] = []
 
     results.extend(_scan_stocks())
@@ -144,46 +229,22 @@ def scan_market() -> List[Tuple[str, str]]:
     results.extend(_scan_predictions())
 
     # Deduplicate keeping first occurrence
-    seen = set()
-    unique = []
+    seen, unique = set(), []
     for item in results:
         if item[0] not in seen:
             seen.add(item[0])
             unique.append(item)
 
     final = unique[:settings.scanner_max_tickers]
-    log.info("Scanner picks: %s", [(t, a) for t, a in final])
+    log.info("Scanner picks: %s", final)
     return final
 
 
 def get_ticker_context(ticker: str) -> Dict:
-    """Pull current price + daily stats for a stock ticker."""
-    if not settings.polygon_api_key:
-        return {}
+    """Pull current price + daily stats from Robinhood."""
     try:
-        r = httpx.get(
-            f"{POLYGON_BASE}/v2/snapshot/locale/us/markets/stocks/tickers",
-            headers=_headers(),
-            params={"tickers": ticker, "include_otc": "false"},
-            timeout=15,
-        )
-        r.raise_for_status()
-        snaps = r.json().get("tickers", [])
-        if not snaps:
-            return {}
-        s    = snaps[0]
-        day  = s.get("day", {})
-        prev = s.get("prevDay", {})
-        price      = day.get("c", 0)
-        prev_close = prev.get("c", 0)
-        change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0
-        return {
-            "price":      price,
-            "change_pct": round(change_pct, 2),
-            "volume":     day.get("v", 0),
-            "high":       day.get("h", 0),
-            "low":        day.get("l", 0),
-        }
+        rh = _rh()
+        return rh.get_market_context(ticker, "stock")
     except Exception as exc:
         log.warning("[%s] get_ticker_context failed: %s", ticker, exc)
         return {}
