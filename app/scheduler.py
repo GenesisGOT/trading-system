@@ -47,6 +47,8 @@ log = logging.getLogger(__name__)
 
 _scheduler: Optional[AsyncIOScheduler] = None
 _halted: bool = False
+# Limit concurrent LLM calls to avoid Groq/Anthropic rate limits
+_llm_semaphore = asyncio.Semaphore(2)
 
 
 # ── Order sizing ──────────────────────────────────────────────────────────────
@@ -82,6 +84,11 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
         log.info("[%s] Skipping — halted", ticker)
         return
 
+    async with _llm_semaphore:  # max 2 concurrent LLM calls to avoid rate limits
+        await _process_symbol_inner(run_id, ticker, asset_type)
+
+
+async def _process_symbol_inner(run_id: str, ticker: str, asset_type: str) -> None:
     log.info("[%s] Starting LangGraph analysis run_id=%s asset_type=%s", ticker, run_id, asset_type)
     upsert_scan_state(run_id, ticker, asset_type, "started")
     try:

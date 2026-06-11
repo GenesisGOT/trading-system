@@ -33,7 +33,7 @@ def recall_ticker(ticker: str) -> str:
     try:
         results = client.search(
             query=f"{ticker} trading decision outcome",
-            user_id="trading_system",
+            filters={"user_id": "trading_system"},
             limit=5,
         )
         if not results:
@@ -79,7 +79,7 @@ def recall_macro_lessons() -> str:
     try:
         results = client.search(
             query="market macro lesson learned mistake",
-            user_id="trading_system",
+            filters={"user_id": "trading_system"},
             limit=3,
         )
         if not results:

@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 
 def get_indicators(ticker: str, asset_type: str = "stock") -> str:
     """Return a formatted string of key technical indicators for the agents to read."""
+    if asset_type == "prediction":
+        return ""  # prediction contracts have no OHLCV on yfinance
     try:
         if asset_type == "crypto":
             return _crypto_indicators(ticker)
@@ -121,6 +123,8 @@ def _compute(ticker: str, df: pd.DataFrame) -> str:
 
 def suggested_stop_loss(ticker: str, entry_price: float, asset_type: str = "stock") -> Optional[float]:
     """Return a suggested stop loss price based on 1.5x ATR below entry."""
+    if asset_type == "prediction":
+        return round(entry_price * 0.50, 4)  # binary contract: stop at 50% of entry
     try:
         import yfinance as yf
         symbol = f"{ticker}-USD" if asset_type == "crypto" and not ticker.endswith("-USD") else ticker

@@ -71,6 +71,8 @@ def get_multiframe_analysis(ticker: str, asset_type: str = "stock") -> Tuple[str
       -1.0 = all 3 timeframes bearish
        0.0 = mixed / no edge
     """
+    if asset_type == "prediction":
+        return "", 0.0  # no OHLCV for prediction contracts
     try:
         import yfinance as yf
         symbol = f"{ticker}-USD" if asset_type == "crypto" and not ticker.endswith("-USD") else ticker
