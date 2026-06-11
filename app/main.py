@@ -269,37 +269,76 @@ async def dashboard(request: Request):
 
 @app.get("/positions")
 async def get_positions():
-    """Return open positions with trailing stop details and live P&L."""
+    """Return live positions from broker merged with trailing stop data."""
     from app.agents.stop_loss_monitor import get_open_stops
-    from app.broker.robinhood_mcp import robinhood
-    positions = []
-    for pos in get_open_stops():
-        current_price = None
-        pnl_pct = None
-        try:
-            ctx = robinhood.get_market_context(pos.ticker, pos.asset_type)
-            current_price = ctx.get("price")
-            if current_price and pos.entry_price:
-                pnl_pct = (current_price - pos.entry_price) / pos.entry_price
-        except Exception:
-            pass
-        positions.append({
-            "ticker": pos.ticker,
-            "asset_type": pos.asset_type,
-            "side": pos.side,
-            "entry_price": pos.entry_price,
-            "stop_loss": pos.stop_loss,
-            "take_profit": pos.take_profit,
-            "high_water": pos.high_water,
-            "trail_pct": pos.trail_pct,
-            "quantity": pos.quantity,
-            "notional": pos.notional,
-            "order_id": pos.order_id,
-            "opened_at": pos.opened_at,
-            "current_price": current_price,
-            "pnl_pct": pnl_pct,
-        })
-    return positions
+
+    # Pull live positions directly from broker
+    broker_positions = []
+    try:
+        if settings.broker == "alpaca":
+            from app.broker.alpaca_connector import get_positions as alpaca_positions, get_quote as alpaca_quote
+            raw = alpaca_positions()
+            for p in raw:
+                sym = (p.get("symbol") or "").upper()
+                qty = float(p.get("qty") or 0)
+                entry = float(p.get("avg_entry_price") or 0)
+                current = float(p.get("current_price") or 0)
+                market_val = float(p.get("market_value") or 0)
+                unrealized_pl = float(p.get("unrealized_pl") or 0)
+                unrealized_plpc = float(p.get("unrealized_plpc") or 0)
+                asset_class = p.get("asset_class", "us_equity")
+                asset_type = "crypto" if asset_class == "crypto" else "stock"
+                broker_positions.append({
+                    "ticker": sym,
+                    "asset_type": asset_type,
+                    "side": "buy",
+                    "entry_price": entry,
+                    "current_price": current,
+                    "quantity": qty,
+                    "market_value": market_val,
+                    "unrealized_pl": unrealized_pl,
+                    "pnl_pct": unrealized_plpc,
+                    "source": "broker",
+                })
+    except Exception as exc:
+        log.warning("Failed to fetch broker positions: %s", exc)
+
+    # Overlay our stop/take-profit data
+    stops_by_ticker = {p.ticker: p for p in get_open_stops()}
+    for pos in broker_positions:
+        stop = stops_by_ticker.get(pos["ticker"])
+        if stop:
+            pos["stop_loss"] = stop.stop_loss
+            pos["take_profit"] = stop.take_profit
+            pos["high_water"] = stop.high_water
+            pos["trail_pct"] = stop.trail_pct
+            pos["order_id"] = stop.order_id
+            pos["opened_at"] = stop.opened_at
+
+    # Include any stops for positions broker doesn't know about yet
+    broker_tickers = {p["ticker"] for p in broker_positions}
+    for ticker, stop in stops_by_ticker.items():
+        if ticker not in broker_tickers:
+            broker_positions.append({
+                "ticker": stop.ticker,
+                "asset_type": stop.asset_type,
+                "side": stop.side,
+                "entry_price": stop.entry_price,
+                "current_price": None,
+                "quantity": stop.quantity,
+                "market_value": stop.notional,
+                "unrealized_pl": None,
+                "pnl_pct": None,
+                "stop_loss": stop.stop_loss,
+                "take_profit": stop.take_profit,
+                "high_water": stop.high_water,
+                "trail_pct": stop.trail_pct,
+                "order_id": stop.order_id,
+                "opened_at": stop.opened_at,
+                "source": "stop_monitor",
+            })
+
+    return broker_positions
 
 
 @app.get("/metrics")

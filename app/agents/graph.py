@@ -184,7 +184,19 @@ def node_enrich(state: dict) -> dict:
         tavily_news = search_ticker_news(underlying, f"{underlying} options implied volatility earnings catalyst")
         flow = search_options_flow(underlying)
     elif asset_type == "prediction":
-        tavily_news = search_ticker_news(ticker, f"{ticker} prediction market odds probability event")
+        # Build smart search query based on contract type
+        if any(x in ticker.upper() for x in ["NYK", "NBA", "FINALS", "SPURS"]):
+            tavily_news = search_ticker_news(ticker, f"NBA Finals 2025 Knicks Spurs series odds prediction")
+        elif any(x in ticker.upper() for x in ["UFC", "TOPURIA", "MMA"]):
+            tavily_news = search_ticker_news(ticker, f"Ilia Topuria UFC Freedom 250 fight odds prediction June 14")
+        elif any(x in ticker.upper() for x in ["ENGLAND", "FRANCE", "WC", "WORLDCUP", "SOCCER"]):
+            tavily_news = search_ticker_news(ticker, f"World Cup 2026 {ticker} quarterfinals odds prediction")
+        elif any(x in ticker.upper() for x in ["BTC", "BITCOIN"]):
+            tavily_news = search_ticker_news(ticker, f"Bitcoin price 2026 prediction {ticker} market odds")
+        elif any(x in ticker.upper() for x in ["CPI", "FED", "RATE", "INFLATION"]):
+            tavily_news = search_ticker_news(ticker, f"CPI inflation June 2026 Federal Reserve prediction")
+        else:
+            tavily_news = search_ticker_news(ticker, f"{ticker} prediction market odds probability latest news")
         flow = ""
     else:
         tavily_news = search_ticker_news(ticker)
@@ -238,7 +250,16 @@ def _analyst_prompt(role: str, ticker: str, asset_type: str, context: str, extra
         "stock": "This is an equity/stock.",
         "option": "This is an options contract. Consider implied volatility, Greeks, time decay, and the catalyst.",
         "crypto": "This is a cryptocurrency. Consider on-chain data, sentiment, and macro crypto conditions.",
-        "prediction": "This is a prediction market contract. Consider probability, event risk, and market odds.",
+        "prediction": (
+            "This is a Robinhood prediction market contract (binary — pays $1 if YES, $0 if NO). "
+            "Consider: current implied probability vs true probability, event proximity, momentum, "
+            "and whether the market is mispriced. "
+            "The user's style: pre-event value plays, same-day momentum flips on live sports. "
+            "Open positions context: NYK NBA Finals (60 contracts, series 2-2 Spurs momentum), "
+            "Topuria UFC Jun 14 (high confidence), England/France WC (pre-tournament value), "
+            "BTC <$55K (likely underwater, BTC ~$100K+), CPI June >0.2% (macro hold). "
+            "Sizing is small ($5-30 per position). Flag if existing position should be cut."
+        ),
     }.get(asset_type, "")
 
     return f"""You are a {role} analyst. {asset_note}

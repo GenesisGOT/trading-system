@@ -40,25 +40,50 @@ function StatCard({ label, value, sub, color, icon: Icon }: {
 
 function PositionRow({ p }: { p: any }) {
   const pnl = p.pnl_pct
+  const pl_dollar = p.unrealized_pl
   const locked = p.stop_loss && p.entry_price ? ((p.stop_loss - p.entry_price) / p.entry_price) : null
+  const assetColors: Record<string, string> = {
+    stock: 'text-terminal-green', crypto: 'text-terminal-cyan',
+    prediction: 'text-purple-400', option: 'text-yellow-400',
+  }
   return (
     <tr className="table-row">
-      <td className="td font-bold text-white">{p.ticker}</td>
-      <td className="td"><span className="text-terminal-muted text-xs">{p.asset_type}</span></td>
+      <td className="td">
+        <span className="font-bold text-white">{p.ticker}</span>
+        <span className={clx('text-xs ml-1.5', assetColors[p.asset_type] || 'text-terminal-muted')}>{p.asset_type}</span>
+      </td>
+      <td className="td text-terminal-muted text-xs">{p.quantity ? `${p.quantity} shares` : '—'}</td>
       <td className="td">{usd(p.entry_price)}</td>
-      <td className="td">{p.current_price ? <span className={pnl >= 0 ? 'text-terminal-green' : 'text-terminal-red'}>{usd(p.current_price)}</span> : '—'}</td>
-      <td className="td text-yellow-400 font-medium">{usd(p.high_water)}</td>
       <td className="td">
-        <span className="text-terminal-red">{usd(p.stop_loss)}</span>
-        {locked != null && <span className="text-xs text-terminal-muted ml-1">({locked >= 0 ? '+' : ''}{(locked*100).toFixed(1)}%)</span>}
+        {p.current_price
+          ? <span className={pnl >= 0 ? 'text-terminal-green' : 'text-terminal-red'}>{usd(p.current_price)}</span>
+          : <span className="text-terminal-muted animate-pulse text-xs">live...</span>}
       </td>
-      <td className="td text-terminal-cyan">{usd(p.take_profit)}</td>
       <td className="td">
-        {pnl != null
-          ? <span className={clx('font-semibold', pnl >= 0 ? 'text-terminal-green' : 'text-terminal-red')}>{sign(pnl)}</span>
-          : '—'}
+        {pnl != null ? (
+          <div className="flex flex-col">
+            <span className={clx('font-semibold', pnl >= 0 ? 'text-terminal-green' : 'text-terminal-red')}>
+              {pnl >= 0 ? '+' : ''}{(pnl * 100).toFixed(2)}%
+            </span>
+            {pl_dollar != null && (
+              <span className={clx('text-xs', pl_dollar >= 0 ? 'text-terminal-green' : 'text-terminal-red')}>
+                {pl_dollar >= 0 ? '+' : ''}{usd(pl_dollar)}
+              </span>
+            )}
+          </div>
+        ) : '—'}
       </td>
-      <td className="td text-terminal-muted text-xs">{fmt(p.opened_at)}</td>
+      <td className="td text-yellow-400 font-medium">{usd(p.high_water) || '—'}</td>
+      <td className="td">
+        {p.stop_loss ? (
+          <>
+            <span className="text-terminal-red">{usd(p.stop_loss)}</span>
+            {locked != null && <span className="text-xs text-terminal-muted ml-1">({locked >= 0 ? '+' : ''}{(locked*100).toFixed(1)}%)</span>}
+          </>
+        ) : <span className="text-terminal-muted text-xs">no stop</span>}
+      </td>
+      <td className="td text-terminal-cyan">{p.take_profit ? usd(p.take_profit) : '—'}</td>
+      <td className="td text-terminal-muted text-xs">{p.opened_at ? fmt(p.opened_at) : '—'}</td>
     </tr>
   )
 }
@@ -492,7 +517,7 @@ export default function App() {
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead><tr>
-                      {['Ticker','Type','Entry','Current','High Water','Stop','Target','P&L','Opened'].map(h => <th key={h} className="th">{h}</th>)}
+                      {['Ticker','Qty','Entry','Live Price','P&L','High Water','Stop','Target','Opened'].map(h => <th key={h} className="th">{h}</th>)}
                     </tr></thead>
                     <tbody>{positions.map((p, i) => <PositionRow key={i} p={p} />)}</tbody>
                   </table>
@@ -510,7 +535,7 @@ export default function App() {
               ? <p className="text-terminal-muted text-sm text-center py-12">No open positions. Stops activate after a BUY executes.</p>
               : <div className="overflow-x-auto">
                   <table className="w-full">
-                    <thead><tr>{['Ticker','Type','Entry','Current','High Water','Trailing Stop','Take Profit','P&L','Opened'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                    <thead><tr>{['Ticker','Qty','Entry','Live Price','P&L','High Water','Stop','Target','Opened'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                     <tbody>{positions.map((p, i) => <PositionRow key={i} p={p} />)}</tbody>
                   </table>
                 </div>
