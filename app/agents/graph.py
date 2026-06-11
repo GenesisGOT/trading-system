@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Annotated
+from typing import Any, Dict, List, Literal, Optional, Annotated, TypedDict
 import operator
 
 from langgraph.graph import StateGraph, END
@@ -30,11 +30,11 @@ ASSET_TYPE = Literal["stock", "option", "crypto", "prediction"]
 
 # ── Graph state ───────────────────────────────────────────────────────────────
 
-class TradingState(dict):
-    """Typed dict that flows through every node."""
+class TradingState(TypedDict, total=False):
+    """TypedDict state — LangGraph creates per-key channels (required for parallel fan-in)."""
     # Inputs
     ticker: str
-    asset_type: ASSET_TYPE
+    asset_type: str
     analysis_date: str
     # Enrichment
     news_context: str
