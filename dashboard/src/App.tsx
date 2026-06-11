@@ -283,8 +283,8 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [s, pos, dec, exc, met, reg] = await Promise.allSettled([
-        api.status(), api.positions(), api.decisions(), api.executions(), api.metrics(), api.regime()
+      const [s, pos, dec, exc, met, reg, port] = await Promise.allSettled([
+        api.status(), api.positions(), api.decisions(), api.executions(), api.metrics(), api.regime(), api.portfolio()
       ])
       if (s.status === 'fulfilled') setStatus(s.value)
       if (pos.status === 'fulfilled') setPositions(pos.value)
@@ -292,13 +292,14 @@ export default function App() {
       if (exc.status === 'fulfilled') setExecutions(exc.value)
       if (met.status === 'fulfilled') setMetrics(met.value)
       if (reg.status === 'fulfilled') setRegime(reg.value)
+      if (port.status === 'fulfilled') setPortfolio(port.value)
       setLastUpdate(new Date().toLocaleTimeString('en-US', { hour12: false }))
     } catch {}
   }, [])
 
   useEffect(() => {
     load()
-    const t = setInterval(load, 30_000)
+    const t = setInterval(load, 10_000)
     return () => clearInterval(t)
   }, [load])
 
