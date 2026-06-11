@@ -285,7 +285,7 @@ function PnlChart({ executions }: { executions: any[] }) {
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'positions' | 'decisions' | 'executions' | 'backtest' | 'feed'
+type Tab = 'overview' | 'positions' | 'decisions' | 'executions' | 'backtest' | 'feed' | 'predictions' | 'brain'
 
 interface FeedEvent {
   type: string
@@ -319,8 +319,12 @@ export default function App() {
   const [lastUpdate, setLastUpdate] = useState('')
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState('')
+  const [predictions, setPredictions] = useState<any[]>([])
+  const [predForm, setPredForm] = useState({ symbol: '', name: '', category: '', entry_price: '', quantity: '' })
   const [feedEvents, setFeedEvents] = useState<FeedEvent[]>([])
   const [feedConnected, setFeedConnected] = useState(false)
+  const [scanStatus, setScanStatus] = useState<any>(null)
+  const [brainHistory, setBrainHistory] = useState<any[]>([])
   const feedRef = useRef<EventSource | null>(null)
   const feedEndRef = useRef<HTMLDivElement>(null)
 
@@ -347,8 +351,9 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [s, pos, dec, exc, met, reg, port] = await Promise.allSettled([
-        api.status(), api.positions(), api.decisions(), api.executions(), api.metrics(), api.regime(), api.portfolio()
+      const [s, pos, dec, exc, met, reg, port, preds, ss, brain] = await Promise.allSettled([
+        api.status(), api.positions(), api.decisions(), api.executions(), api.metrics(), api.regime(), api.portfolio(), api.predictions(),
+        api.scanStatus(), api.brain()
       ])
       if (s.status === 'fulfilled') setStatus(s.value)
       if (pos.status === 'fulfilled') setPositions(pos.value)
@@ -357,6 +362,9 @@ export default function App() {
       if (met.status === 'fulfilled') setMetrics(met.value)
       if (reg.status === 'fulfilled') setRegime(reg.value)
       if (port.status === 'fulfilled') setPortfolio(port.value)
+      if (preds.status === 'fulfilled') setPredictions(preds.value)
+      if (ss.status === 'fulfilled') setScanStatus(ss.value)
+      if (brain.status === 'fulfilled') setBrainHistory(brain.value)
       setLastUpdate(new Date().toLocaleTimeString('en-US', { hour12: false }))
     } catch {}
   }, [])
@@ -389,12 +397,14 @@ export default function App() {
   const broker = status?.broker || 'robinhood'
 
   const tabs: { id: Tab; label: string; icon: any; count?: number }[] = [
-    { id: 'overview',   label: 'Overview',   icon: Activity },
-    { id: 'positions',  label: 'Positions',  icon: Wallet,   count: positions.length },
-    { id: 'decisions',  label: 'Decisions',  icon: Cpu,      count: decisions.length },
-    { id: 'executions', label: 'Executions', icon: Zap,      count: executions.length },
-    { id: 'backtest',   label: 'Backtest',   icon: BarChart2 },
-    { id: 'feed',       label: 'Live Feed',  icon: Activity,  count: feedConnected ? undefined : 0 },
+    { id: 'overview',    label: 'Overview',    icon: Activity },
+    { id: 'positions',   label: 'Positions',   icon: Wallet,   count: positions.length },
+    { id: 'decisions',   label: 'Decisions',   icon: Cpu,      count: decisions.length },
+    { id: 'executions',  label: 'Executions',  icon: Zap,      count: executions.length },
+    { id: 'backtest',    label: 'Backtest',    icon: BarChart2 },
+    { id: 'predictions', label: 'Predictions', icon: Eye },
+    { id: 'brain',       label: 'Brain',       icon: Cpu,      count: brainHistory.length || undefined },
+    { id: 'feed',        label: 'Live Feed',   icon: Activity, count: feedConnected ? undefined : 0 },
   ]
 
   return (
@@ -438,6 +448,18 @@ export default function App() {
             ? <button onClick={handleResume} className="btn-green flex items-center gap-1"><Play size={11} />Resume</button>
             : <button onClick={handleHalt} className="btn-red flex items-center gap-1"><Square size={11} />Halt</button>
           }
+          {/* Auto-scan countdown */}
+          {scanStatus && (
+            <div className="hidden lg:flex flex-col items-end gap-0.5">
+              <span className={clx(
+                'text-xs font-semibold',
+                scanStatus.status === 'scanning' ? 'text-terminal-green animate-pulse' : 'text-terminal-cyan'
+              )}>
+                {scanStatus.status === 'scanning' ? '⟳ Scanning…' : `Next: ${scanStatus.next_scan_label}`}
+              </span>
+              <span className="text-[10px] text-terminal-muted">last: {scanStatus.last_scan_label}</span>
+            </div>
+          )}
           <span className="text-terminal-muted text-xs hidden lg:block">{lastUpdate && `↻ ${lastUpdate}`}</span>
         </div>
       </header>
@@ -573,6 +595,79 @@ export default function App() {
 
         {/* BACKTEST */}
         {tab === 'backtest' && <BacktestPanel />}
+
+        {/* PREDICTIONS */}
+        {tab === 'predictions' && (
+          <div className="space-y-4">
+            <div className="card">
+              <div className="label flex items-center gap-2 mb-3"><Eye size={11} />Prediction Contracts</div>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {(['symbol','name','category'] as const).map(f => (
+                  <input key={f} value={predForm[f]} onChange={e => setPredForm(p => ({...p, [f]: e.target.value}))}
+                    placeholder={f} className="bg-terminal-surface border border-terminal-border rounded px-3 py-1.5 text-xs text-white w-32 focus:outline-none focus:border-terminal-cyan" />
+                ))}
+                <input value={predForm.entry_price} onChange={e => setPredForm(p => ({...p, entry_price: e.target.value}))}
+                  placeholder="entry $" type="number" step="0.01" className="bg-terminal-surface border border-terminal-border rounded px-3 py-1.5 text-xs text-white w-24 focus:outline-none focus:border-terminal-cyan" />
+                <input value={predForm.quantity} onChange={e => setPredForm(p => ({...p, quantity: e.target.value}))}
+                  placeholder="qty" type="number" className="bg-terminal-surface border border-terminal-border rounded px-3 py-1.5 text-xs text-white w-20 focus:outline-none focus:border-terminal-cyan" />
+                <button onClick={async () => {
+                  if (!predForm.symbol) return
+                  await api.addPrediction({ ...predForm, entry_price: parseFloat(predForm.entry_price)||0, quantity: parseInt(predForm.quantity)||0 })
+                  setPredForm({ symbol: '', name: '', category: '', entry_price: '', quantity: '' })
+                  load()
+                }} className="btn-green text-xs">+ Add</button>
+              </div>
+              {predictions.length === 0
+                ? <p className="text-terminal-muted text-sm text-center py-8">No prediction contracts. Add one above to start scanning.</p>
+                : <table className="w-full text-xs">
+                    <thead><tr>{['Symbol','Name','Category','Entry $','Qty','Added'].map(h => <th key={h} className="th">{h}</th>)}<th className="th"></th></tr></thead>
+                    <tbody>
+                      {predictions.map((p: any) => (
+                        <tr key={p.symbol} className="table-row">
+                          <td className="td font-bold text-purple-400">{p.symbol}</td>
+                          <td className="td text-terminal-muted">{p.name || '—'}</td>
+                          <td className="td text-terminal-muted">{p.category || '—'}</td>
+                          <td className="td">{p.entry_price ? `$${p.entry_price}` : '—'}</td>
+                          <td className="td">{p.quantity || '—'}</td>
+                          <td className="td text-terminal-muted">{p.added_at ? fmt(p.added_at) : '—'}</td>
+                          <td className="td">
+                            <button onClick={async () => { await api.removePrediction(p.symbol); load() }}
+                              className="text-terminal-red hover:text-red-300 text-xs">remove</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+              }
+            </div>
+          </div>
+        )}
+
+        {/* BRAIN */}
+        {tab === 'brain' && (
+          <div className="space-y-4">
+            <div className="card">
+              <div className="label flex items-center gap-2 mb-1"><Cpu size={11} />Portfolio Brain</div>
+              <p className="text-terminal-muted text-xs mb-4">Master AI agent that runs after every scan cycle — sees all decisions, all positions, all markets simultaneously.</p>
+              {brainHistory.length === 0
+                ? <div className="text-terminal-muted text-sm text-center py-12">
+                    No analysis yet. Brain runs automatically after each scan cycle completes.
+                  </div>
+                : <div className="space-y-3">
+                    {brainHistory.map((b: any, i: number) => (
+                      <div key={i} className="bg-terminal-surface rounded-lg p-4 border border-terminal-border">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-terminal-cyan text-xs font-semibold">Analysis #{brainHistory.length - i}</span>
+                          <span className="text-terminal-muted text-xs">{b.timestamp ? fmt(b.timestamp) : '—'}</span>
+                        </div>
+                        <p className="text-sm text-terminal-text leading-relaxed whitespace-pre-wrap">{b.analysis}</p>
+                      </div>
+                    ))}
+                  </div>
+              }
+            </div>
+          </div>
+        )}
 
         {/* LIVE FEED */}
         {tab === 'feed' && (

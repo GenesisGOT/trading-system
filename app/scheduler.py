@@ -450,6 +450,48 @@ async def _run_loop(resume: bool = False) -> None:
     except Exception:
         pass
 
+    # ── Portfolio Brain — runs after all categories complete ──────────────
+    if total_analyzed > 0:
+        try:
+            from app.agents.portfolio_brain import run_portfolio_brain
+            from app.database import get_recent_decisions, load_positions
+
+            # Pull this cycle's decisions from DB
+            recent = get_recent_decisions(limit=50)
+            cycle_decisions = [
+                {
+                    "ticker": d["ticker"],
+                    "asset_type": d.get("raw_state", "{}"),
+                    "action": d["action"],
+                    "confidence": d["confidence"] or 0.0,
+                    "rating": d["rating"],
+                    "thesis": d["investment_thesis"] or "",
+                }
+                for d in recent
+                if d["run_id"] == run_id
+            ]
+
+            # Open positions
+            open_positions = load_positions()
+
+            # Portfolio state from broker
+            try:
+                portfolio_state = broker.get_portfolio()
+            except Exception:
+                portfolio_state = {}
+
+            session_label = _get_session()
+            await asyncio.to_thread(
+                run_portfolio_brain,
+                run_id,
+                cycle_decisions,
+                open_positions,
+                portfolio_state,
+                session_label,
+            )
+        except Exception as exc:
+            log.warning("Portfolio Brain failed: %s", exc)
+
 
 # ── Halt / resume ─────────────────────────────────────────────────────────────
 

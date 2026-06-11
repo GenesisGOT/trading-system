@@ -506,3 +506,63 @@ async def market_regime():
         "kelly_multiplier": r.kelly_mult,
         "description": r.description,
     }
+
+
+@app.get("/scan-status")
+async def scan_status():
+    """Return current auto-scan state: last scan time, next scan ETA, and whether a scan is running."""
+    from app.database import get_last_scan_completed_seconds_ago
+    from app.config import settings
+
+    seconds_ago = get_last_scan_completed_seconds_ago()
+    interval_sec = settings.loop_interval_minutes * 60
+
+    if seconds_ago is None:
+        return {
+            "last_scan_seconds_ago": None,
+            "last_scan_label": "Never",
+            "next_scan_seconds": None,
+            "next_scan_label": "Starting soon…",
+            "interval_minutes": settings.loop_interval_minutes,
+            "status": "waiting",
+        }
+
+    next_scan = max(0, interval_sec - seconds_ago)
+    if seconds_ago < 60:
+        last_label = "Just now"
+    elif seconds_ago < 3600:
+        mins = int(seconds_ago // 60)
+        last_label = f"{mins}m ago"
+    else:
+        hrs = int(seconds_ago // 3600)
+        last_label = f"{hrs}h ago"
+
+    if next_scan == 0:
+        next_label = "Scanning now…"
+        scan_status_val = "scanning"
+    elif next_scan < 60:
+        next_label = f"{int(next_scan)}s"
+        scan_status_val = "idle"
+    else:
+        next_label = f"{int(next_scan // 60)}m {int(next_scan % 60)}s"
+        scan_status_val = "idle"
+
+    return {
+        "last_scan_seconds_ago": seconds_ago,
+        "last_scan_label": last_label,
+        "next_scan_seconds": next_scan,
+        "next_scan_label": next_label,
+        "interval_minutes": settings.loop_interval_minutes,
+        "status": scan_status_val,
+    }
+
+
+@app.get("/brain")
+async def get_brain_history():
+    """Return the last Portfolio Brain analyses from system events."""
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT detail, created_at FROM system_events WHERE event_type='portfolio_brain' ORDER BY id DESC LIMIT 10"
+        ).fetchall()
+    return [{"analysis": r["detail"], "timestamp": r["created_at"]} for r in rows]

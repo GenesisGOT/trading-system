@@ -250,6 +250,29 @@ class BrokerConnector:
         from app.broker.robinhood_mcp import robinhood
         return robinhood.get_market_context(ticker, asset_type)
 
+    def get_portfolio(self) -> Dict[str, Any]:
+        """Return portfolio summary {equity, cash, buying_power, day_pnl, day_pnl_pct, open_positions}."""
+        try:
+            from app.broker.alpaca_connector import get_account as alpaca_account
+            acc = alpaca_account()
+            equity = float(acc.get("equity") or 0)
+            cash = float(acc.get("cash") or 0)
+            prev_equity = float(acc.get("last_equity") or equity)
+            day_pnl = equity - prev_equity
+            day_pnl_pct = day_pnl / prev_equity if prev_equity else 0.0
+            from app.database import load_positions
+            return {
+                "equity": equity,
+                "cash": cash,
+                "buying_power": float(acc.get("buying_power") or cash),
+                "day_pnl": day_pnl,
+                "day_pnl_pct": day_pnl_pct,
+                "open_positions": len(load_positions()),
+            }
+        except Exception as exc:
+            log.debug("get_portfolio failed: %s", exc)
+            return {}
+
     def status(self) -> Dict[str, Any]:
         alpaca_paper = getattr(settings, "alpaca_paper", True)
         return {

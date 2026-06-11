@@ -18,4 +18,10 @@ export const api = {
   trigger:    () => req('/trigger', { method: 'POST' }),
   halt:       () => req('/halt', { method: 'POST', body: JSON.stringify({ reason: 'dashboard halt' }) }),
   resume:     () => req('/resume', { method: 'POST' }),
+  predictions:      () => req('/predictions'),
+  addPrediction:    (p: { symbol: string; name?: string; category?: string; entry_price?: number; quantity?: number }) =>
+    req('/predictions', { method: 'POST', body: JSON.stringify(p) }),
+  removePrediction: (symbol: string) => req(`/predictions/${symbol}`, { method: 'DELETE' }),
+  scanStatus:       () => req('/scan-status'),
+  brain:            () => req('/brain'),
 }
