@@ -556,6 +556,28 @@ async def trigger_now() -> None:
 
 
 async def resume_incomplete_scan() -> None:
-    """Called on startup — resumes any scan interrupted by a redeploy."""
+    """Called on startup — resumes interrupted scan or starts fresh if overdue."""
     await asyncio.sleep(5)  # let the server fully start first
-    await _run_loop(resume=True)
+
+    from app.database import get_incomplete_scan, get_last_scan_completed_seconds_ago
+
+    # 1. Resume mid-run scan if one exists
+    incomplete = get_incomplete_scan()
+    if incomplete:
+        log.info("[startup] Resuming interrupted scan from previous deploy")
+        await _run_loop(resume=True)
+        return
+
+    # 2. Check if we're overdue for a scan
+    seconds_ago = get_last_scan_completed_seconds_ago()
+    interval_seconds = settings.loop_interval_minutes * 60
+
+    if seconds_ago is None:
+        log.info("[startup] No previous scan found — starting fresh scan")
+        await _run_loop()
+    elif seconds_ago >= interval_seconds:
+        log.info("[startup] Last scan was %.0fs ago (interval=%ds) — running immediately", seconds_ago, interval_seconds)
+        await _run_loop()
+    else:
+        remaining = interval_seconds - seconds_ago
+        log.info("[startup] Last scan was %.0fs ago — next scan in %.0fs (scheduler will handle)", seconds_ago, remaining)

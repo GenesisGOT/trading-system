@@ -81,6 +81,16 @@ def init_db() -> None:
                 created_at  TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS prediction_contracts (
+                symbol      TEXT PRIMARY KEY,
+                name        TEXT,
+                category    TEXT,
+                entry_price REAL,
+                quantity    INTEGER,
+                active      INTEGER DEFAULT 1,
+                added_at    TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS scan_state (
                 run_id      TEXT NOT NULL,
                 ticker      TEXT NOT NULL,
@@ -260,6 +270,47 @@ def get_win_rate_30d() -> float:
         if not row or not row["entries"] or row["entries"] < 3:
             return 0.5
         return min(row["exits"], row["entries"]) / row["entries"]
+
+
+def get_last_scan_completed_seconds_ago() -> Optional[float]:
+    """Return how many seconds ago the last scan completed, or None if never."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT created_at FROM system_events WHERE event_type='loop_complete' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        from datetime import datetime, timezone
+        try:
+            last = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+            delta = datetime.now(timezone.utc) - last
+            return delta.total_seconds()
+        except Exception:
+            return None
+
+
+def upsert_prediction_contract(symbol: str, name: str = "", category: str = "", entry_price: float = 0.0, quantity: int = 0) -> None:
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO prediction_contracts (symbol, name, category, entry_price, quantity, active, added_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                name=excluded.name, category=excluded.category,
+                entry_price=excluded.entry_price, quantity=excluded.quantity, active=1
+        """, (symbol.upper(), name, category, entry_price, quantity, _now()))
+
+
+def get_active_prediction_contracts() -> list:
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM prediction_contracts WHERE active=1 ORDER BY added_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def deactivate_prediction_contract(symbol: str) -> None:
+    with get_db() as conn:
+        conn.execute("UPDATE prediction_contracts SET active=0 WHERE symbol=?", (symbol.upper(),))
 
 
 def upsert_scan_state(run_id: str, ticker: str, asset_type: str, status: str) -> None:
