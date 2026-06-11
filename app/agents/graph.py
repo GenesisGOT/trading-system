@@ -286,7 +286,7 @@ def node_market_analyst(state: dict) -> dict:
     except Exception as exc:
         report = f"Market analysis unavailable: {exc}"
     log.debug("[%s] Market analyst done", ticker)
-    return {**state, "market_report": report}
+    return {"market_report": report}
 
 
 def node_sentiment_analyst(state: dict) -> dict:
@@ -302,7 +302,7 @@ def node_sentiment_analyst(state: dict) -> dict:
     except Exception as exc:
         report = f"Sentiment analysis unavailable: {exc}"
     log.debug("[%s] Sentiment analyst done", ticker)
-    return {**state, "sentiment_report": report}
+    return {"sentiment_report": report}
 
 
 def node_news_analyst(state: dict) -> dict:
@@ -319,7 +319,7 @@ def node_news_analyst(state: dict) -> dict:
     except Exception as exc:
         report = f"News analysis unavailable: {exc}"
     log.debug("[%s] News analyst done", ticker)
-    return {**state, "news_report": report}
+    return {"news_report": report}
 
 
 def node_fundamentals_analyst(state: dict) -> dict:
@@ -341,13 +341,13 @@ def node_fundamentals_analyst(state: dict) -> dict:
     except Exception as exc:
         report = f"Fundamentals analysis unavailable: {exc}"
     log.debug("[%s] Fundamentals analyst done", ticker)
-    return {**state, "fundamentals_report": report}
+    return {"fundamentals_report": report}
 
 
 def node_options_flow_analyst(state: dict) -> dict:
     ticker = state["ticker"]
     if not state["options_flow_context"]:
-        return {**state, "options_report": "No options flow data available."}
+        return {"options_report": "No options flow data available."}
     prompt = _analyst_prompt(
         "options flow / smart money",
         ticker,
@@ -360,7 +360,7 @@ def node_options_flow_analyst(state: dict) -> dict:
     except Exception as exc:
         report = f"Options flow analysis unavailable: {exc}"
     log.debug("[%s] Options flow analyst done", ticker)
-    return {**state, "options_report": report}
+    return {"options_report": report}
 
 
 def node_bull_bear_debate(state: dict) -> dict:

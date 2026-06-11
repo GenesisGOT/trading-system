@@ -40,7 +40,8 @@ def recall_ticker(ticker: str) -> str:
             return ""
         lines = [f"PAST DECISIONS FOR {ticker}:"]
         for r in results:
-            mem = r.get("memory", "")
+            # Mem0 v3 may return strings or dicts depending on SDK version
+            mem = r if isinstance(r, str) else r.get("memory", r.get("text", ""))
             if mem:
                 lines.append(f"• {mem}")
         return "\n".join(lines)
@@ -84,8 +85,12 @@ def recall_macro_lessons() -> str:
         )
         if not results:
             return ""
+        def _extract(r):
+            if isinstance(r, str):
+                return r
+            return r.get("memory", r.get("text", ""))
         return "PAST MARKET LESSONS:\n" + "\n".join(
-            f"• {r['memory']}" for r in results if r.get("memory")
+            f"• {_extract(r)}" for r in results if _extract(r)
         )
     except Exception as exc:
         log.warning("Mem0 macro recall failed: %s", exc)
