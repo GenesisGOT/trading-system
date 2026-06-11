@@ -24,11 +24,14 @@ from datetime import datetime
 from app.config import settings
 from app.database import (
     get_daily_trade_count,
+    get_incomplete_scan,
     log_analyst_report,
     log_decision,
     log_execution,
     log_system_event,
     save_research,
+    save_scan_symbols,
+    upsert_scan_state,
 )
 from app.notifications import (
     notify_error,
@@ -80,6 +83,7 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
         return
 
     log.info("[%s] Starting LangGraph analysis run_id=%s asset_type=%s", ticker, run_id, asset_type)
+    upsert_scan_state(run_id, ticker, asset_type, "started")
 
     analysis_date = settings.analysis_date_override or date.today().isoformat()
 
@@ -141,6 +145,7 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
     if result.action == "HOLD":
         log.info("[%s] HOLD — no trade", ticker)
         notify_hold(ticker, result.rating, result.confidence, result.investment_thesis)
+        upsert_scan_state(run_id, ticker, asset_type, "completed")
         return
 
     # ── 6. Validator already ran inside the graph — check result ─────────
@@ -218,6 +223,8 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
         current_price=market_ctx.get("price"), change_pct=market_ctx.get("change_pct"),
         volume=market_ctx.get("volume"), asset_type=asset_type,
     )
+
+    upsert_scan_state(run_id, ticker, asset_type, "completed")
 
     # ── Register stop loss / take profit for executed BUY orders ──────────
     if order.status in ("submitted", "dry_run") and side == "buy":
@@ -335,7 +342,7 @@ def _is_correlated_with_existing(ticker: str, asset_type: str) -> bool:
     return False
 
 
-async def _run_loop() -> None:
+async def _run_loop(resume: bool = False) -> None:
     if _halted:
         log.info("Loop skipped — halted")
         return
@@ -345,29 +352,42 @@ async def _run_loop() -> None:
         log.warning("Circuit breaker triggered — loop aborted")
         return
 
-    run_id = str(uuid.uuid4())[:8]
-    log.info("=== Loop start run_id=%s ===", run_id)
-    log_system_event("loop_start", f"run_id={run_id}")
+    # Check for an incomplete scan to resume
+    if resume:
+        incomplete = get_incomplete_scan()
+        if incomplete:
+            run_id, pending = incomplete
+            log.info("=== Resuming interrupted scan run_id=%s — %d tickers remaining ===", run_id, len(pending))
+            log_system_event("loop_resume", f"run_id={run_id} pending={len(pending)}")
+            tradeable = pending
+        else:
+            resume = False  # nothing to resume, fall through to fresh scan
 
-    try:
-        from app.scanner import scan_market
-        symbols = await asyncio.to_thread(scan_market)
-    except Exception as exc:
-        log.error("Scanner failed: %s — falling back to config symbols", exc)
-        crypto = [s.strip().upper() for s in settings.scanner_crypto_symbols.split(",") if s.strip()]
-        symbols = [(s, "stock") for s in settings.allowed_symbols] + [(s, "crypto") for s in crypto]
+    if not resume:
+        run_id = str(uuid.uuid4())[:8]
+        log.info("=== Loop start run_id=%s ===", run_id)
+        log_system_event("loop_start", f"run_id={run_id}")
 
-    session = _get_session()
-    log.info("Market session: %s", session)
+        try:
+            from app.scanner import scan_market
+            symbols = await asyncio.to_thread(scan_market)
+        except Exception as exc:
+            log.error("Scanner failed: %s — falling back to config symbols", exc)
+            crypto = [s.strip().upper() for s in settings.scanner_crypto_symbols.split(",") if s.strip()]
+            symbols = [(s, "stock") for s in settings.allowed_symbols] + [(s, "crypto") for s in crypto]
 
-    # Filter symbols by session
-    tradeable = [(t, a) for t, a in symbols if _should_analyze(t, a, session)]
-    skipped = len(symbols) - len(tradeable)
-    if skipped:
-        log.info("Skipping %d symbols (session=%s, crypto/prediction still active)", skipped, session)
+        session = _get_session()
+        log.info("Market session: %s", session)
+        tradeable = [(t, a) for t, a in symbols if _should_analyze(t, a, session)]
+        skipped = len(symbols) - len(tradeable)
+        if skipped:
+            log.info("Skipping %d symbols (session=%s)", skipped, session)
+
+        # Persist all symbols upfront so restarts can resume
+        save_scan_symbols(run_id, tradeable)
 
     log.info("Analyzing %d symbols in parallel: %s", len(tradeable), tradeable)
-    notify_scan_start([f"{t}({a})" for t, a in tradeable], session=session)
+    notify_scan_start([f"{t}({a})" for t, a in tradeable], session=_get_session())
 
     async def _safe_process(ticker: str, asset_type: str) -> None:
         try:
@@ -484,3 +504,9 @@ def stop_scheduler() -> None:
 
 async def trigger_now() -> None:
     await _run_loop()
+
+
+async def resume_incomplete_scan() -> None:
+    """Called on startup — resumes any scan interrupted by a redeploy."""
+    await asyncio.sleep(5)  # let the server fully start first
+    await _run_loop(resume=True)

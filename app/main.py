@@ -46,8 +46,11 @@ async def lifespan(app: FastAPI):
     from app.agents.stop_loss_monitor import restore_positions_from_db
     restore_positions_from_db()
 
-    from app.scheduler import start_scheduler
+    from app.scheduler import start_scheduler, resume_incomplete_scan
     start_scheduler()
+
+    # Resume any scan that was interrupted by the previous deploy
+    asyncio.create_task(resume_incomplete_scan())
 
     yield
 

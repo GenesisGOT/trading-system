@@ -81,6 +81,16 @@ def init_db() -> None:
                 created_at  TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS scan_state (
+                run_id      TEXT NOT NULL,
+                ticker      TEXT NOT NULL,
+                asset_type  TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                started_at  TEXT,
+                completed_at TEXT,
+                PRIMARY KEY (run_id, ticker)
+            );
+
             CREATE TABLE IF NOT EXISTS research_library (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticker          TEXT NOT NULL,
@@ -250,6 +260,53 @@ def get_win_rate_30d() -> float:
         if not row or not row["entries"] or row["entries"] < 3:
             return 0.5
         return min(row["exits"], row["entries"]) / row["entries"]
+
+
+def upsert_scan_state(run_id: str, ticker: str, asset_type: str, status: str) -> None:
+    now = _now()
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO scan_state (run_id, ticker, asset_type, status, started_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, ticker) DO UPDATE SET
+                status=excluded.status,
+                completed_at=CASE WHEN excluded.status='completed' THEN excluded.completed_at ELSE completed_at END
+        """, (
+            run_id, ticker, asset_type, status,
+            now if status == "started" else None,
+            now if status == "completed" else None,
+        ))
+
+
+def get_incomplete_scan() -> Optional[tuple]:
+    """Return (run_id, [(ticker, asset_type)]) for the most recent incomplete scan, or None."""
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT run_id FROM scan_state
+            WHERE status != 'completed'
+            ORDER BY started_at DESC LIMIT 1
+        """).fetchone()
+        if not row:
+            return None
+        run_id = row["run_id"]
+        pending = conn.execute("""
+            SELECT ticker, asset_type FROM scan_state
+            WHERE run_id=? AND status != 'completed'
+            ORDER BY rowid
+        """, (run_id,)).fetchall()
+        if not pending:
+            return None
+        return (run_id, [(r["ticker"], r["asset_type"]) for r in pending])
+
+
+def save_scan_symbols(run_id: str, symbols: list) -> None:
+    """Persist all symbols for a scan run upfront so we can resume if interrupted."""
+    now = _now()
+    with get_db() as conn:
+        conn.executemany("""
+            INSERT OR IGNORE INTO scan_state (run_id, ticker, asset_type, status, started_at)
+            VALUES (?, ?, ?, 'pending', ?)
+        """, [(run_id, t, a, now) for t, a in symbols])
 
 
 def save_research(
