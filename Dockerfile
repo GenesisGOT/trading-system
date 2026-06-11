@@ -2,29 +2,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System dependencies
+# System dependencies (build-essential for any sdist-only packages)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    curl \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Install TradingAgents from GitHub ────────────────────────────────────────
-RUN git clone --depth=1 https://github.com/TauricResearch/TradingAgents.git /opt/TradingAgents \
-    && pip install --no-cache-dir /opt/TradingAgents
+# ── CPU-only torch FIRST ──────────────────────────────────────────────────────
+# Default PyPI torch on Linux drags in ~2.5 GB of CUDA wheels. Railway has no
+# GPU — the CPU wheel (~200 MB) satisfies requirements.txt's torch>=2.2.0 and
+# pip skips reinstalling it.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-# ── Install Vibe-Trading from GitHub ─────────────────────────────────────────
-RUN git clone --depth=1 https://github.com/HKUDS/Vibe-Trading.git /opt/Vibe-Trading \
-    && pip install --no-cache-dir /opt/Vibe-Trading || true
-# The '|| true' allows the container to start even if Vibe-Trading's install
-# fails (e.g. missing optional deps); the SDK availability check in
-# broker/connector.py will degrade gracefully to dry-run mode.
-
-# ── Install our app dependencies ──────────────────────────────────────────────
+# ── App dependencies (cached layer — only rebuilds when requirements.txt changes)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ── Copy application source ───────────────────────────────────────────────────
+# ── Pre-bake FinBERT so containers don't re-download it from HF on every boot
+RUN python -c "from transformers import AutoTokenizer, AutoModelForSequenceClassification; \
+    AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
+    AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')"
+
+# ── Copy application source (changes here don't invalidate the pip layers) ────
 COPY app/ ./app/
 
 # ── Runtime directories ───────────────────────────────────────────────────────

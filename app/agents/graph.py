@@ -14,8 +14,10 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Annotated, TypedDict
+from typing import Any, Dict, List, Literal, Optional, Annotated
 import operator
+
+from typing_extensions import TypedDict  # langgraph requires this on Python < 3.12
 
 from langgraph.graph import StateGraph, END
 
@@ -58,6 +60,8 @@ class TradingState(TypedDict, total=False):
     confidence: float
     investment_thesis: str
     price_target: Optional[float]
+    stop_loss: Optional[float]
+    take_profit: Optional[float]
     time_horizon: Optional[str]
     # Validation
     validation_confidence: float
@@ -579,7 +583,9 @@ def should_redebate(state: dict) -> str:
 # ── Graph builder ─────────────────────────────────────────────────────────────
 
 def build_graph() -> Any:
-    g = StateGraph(dict)
+    # Must be a TypedDict schema — StateGraph(dict) collapses all state into a
+    # single __root__ channel, which crashes on parallel analyst fan-in
+    g = StateGraph(TradingState)
 
     g.add_node("enrich", node_enrich)
     g.add_node("market_analyst", node_market_analyst)

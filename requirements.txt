@@ -10,10 +10,7 @@ APScheduler>=3.10.4
 # HTTP client (notifications)
 httpx>=0.28.0
 
-# TradingAgents (installed from source in Dockerfile)
-# tradingagents  ← git clone + pip install
-
-# LangChain (pulled in by tradingagents, pinned for reproducibility)
+# LangChain / LangGraph (our own agent pipeline in app/agents/graph.py)
 langchain-core>=0.3.81
 langchain-groq>=0.2.3          # FREE default provider — console.groq.com
 langchain-openai>=0.3.23       # optional
@@ -33,9 +30,6 @@ pandas>=2.2.0
 tavily-python>=0.3.0          # real-time search — free at app.tavily.com
 mem0ai>=0.1.0                 # persistent agent memory — free at app.mem0.ai
 pytz>=2024.1                  # timezone-aware session detection
-
-# Vibe-Trading SDK deps (installed from source in Dockerfile)
-# vibe-trading  ← git clone + pip install
 
 # Dashboard templating
 jinja2>=3.1.0
