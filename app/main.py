@@ -47,6 +47,15 @@ async def lifespan(app: FastAPI):
     from app.agents.stop_loss_monitor import restore_positions_from_db
     restore_positions_from_db()
 
+    # Seed prediction contracts from env var if DB is empty
+    from app.database import get_active_prediction_contracts, upsert_prediction_contract
+    if not get_active_prediction_contracts() and settings.prediction_symbols:
+        for sym in settings.prediction_symbols.split(","):
+            sym = sym.strip().upper()
+            if sym:
+                upsert_prediction_contract(sym)
+                log.info("Seeded prediction contract: %s", sym)
+
     from app.scheduler import start_scheduler, resume_incomplete_scan
     start_scheduler()
 
@@ -204,6 +213,43 @@ async def scan_feed(request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/predictions")
+async def get_predictions():
+    """Return all active prediction market contracts."""
+    from app.database import get_active_prediction_contracts
+    return get_active_prediction_contracts()
+
+
+class PredictionContract(BaseModel):
+    symbol: str
+    name: str = ""
+    category: str = ""
+    entry_price: float = 0.0
+    quantity: int = 0
+
+
+@app.post("/predictions")
+async def add_prediction(contract: PredictionContract):
+    """Add or update a prediction market contract to track."""
+    from app.database import upsert_prediction_contract
+    upsert_prediction_contract(
+        symbol=contract.symbol,
+        name=contract.name,
+        category=contract.category,
+        entry_price=contract.entry_price,
+        quantity=contract.quantity,
+    )
+    return {"status": "ok", "symbol": contract.symbol.upper()}
+
+
+@app.delete("/predictions/{symbol}")
+async def remove_prediction(symbol: str):
+    """Deactivate a prediction contract (won't be scanned anymore)."""
+    from app.database import deactivate_prediction_contract
+    deactivate_prediction_contract(symbol)
+    return {"status": "ok", "symbol": symbol.upper()}
 
 
 @app.get("/research")

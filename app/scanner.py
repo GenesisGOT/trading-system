@@ -139,31 +139,19 @@ def _scan_options() -> List[Tuple[str, str]]:
 # ── Prediction Markets ────────────────────────────────────────────────────────
 
 def _scan_predictions() -> List[Tuple[str, str]]:
-    """Pull active prediction market contracts from Robinhood."""
-    # First check config overrides
-    config_symbols = [s.strip() for s in settings.prediction_symbols.split(",") if s.strip()]
-
+    """Pull active prediction contracts from database (user-managed via dashboard)."""
     try:
-        rh = _rh()
-        # Try to pull live prediction contracts from Robinhood
-        contracts = rh._call("get_prediction_contracts", {"status": "open"}) or {}
-        items = contracts.get("results", contracts.get("contracts", []))
-
-        if isinstance(items, list) and items:
-            active = []
-            for c in items:
-                sym = (c.get("symbol") or c.get("event_id") or "").upper()
-                vol = float(c.get("volume") or c.get("contracts_traded") or 0)
-                if sym and vol > 100:  # only contracts with real activity
-                    active.append((sym, "prediction"))
-
-            if active:
-                log.info("Robinhood prediction markets: %d active contracts", len(active))
-                return active[:3]
-
+        from app.database import get_active_prediction_contracts
+        contracts = get_active_prediction_contracts()
+        if contracts:
+            symbols = [(c["symbol"], "prediction") for c in contracts]
+            log.info("Prediction contracts from DB: %s", symbols)
+            return symbols
     except Exception as exc:
-        log.warning("Prediction market scanner failed: %s", exc)
+        log.warning("DB prediction scan failed: %s", exc)
 
+    # Fallback to env var
+    config_symbols = [s.strip() for s in settings.prediction_symbols.split(",") if s.strip()]
     return [(s, "prediction") for s in config_symbols]
 
 
@@ -225,24 +213,26 @@ def get_robinhood_market_news() -> str:
 # ── Main scanner ──────────────────────────────────────────────────────────────
 
 def scan_market() -> List[Tuple[str, str]]:
-    """Return top (ticker, asset_type) pairs for this cycle from Robinhood."""
+    """Return (ticker, asset_type) pairs for this cycle.
+
+    Order: predictions first, then other categories once proven stable.
+    """
     results: List[Tuple[str, str]] = []
 
-    results.extend(_scan_stocks())
-    results.extend(_scan_crypto())
-    results.extend(_scan_options())
-    results.extend(_scan_predictions())
+    # Predictions always run — 24/7, no market session dependency
+    predictions = _scan_predictions()
+    results.extend(predictions)
+    log.info("Predictions: %s", predictions)
 
-    # Deduplicate keeping first occurrence
+    # Deduplicate
     seen, unique = set(), []
     for item in results:
         if item[0] not in seen:
             seen.add(item[0])
             unique.append(item)
 
-    final = unique[:settings.scanner_max_tickers]
-    log.info("Scanner picks: %s", final)
-    return final
+    log.info("Scanner picks: %s", unique)
+    return unique
 
 
 def get_ticker_context(ticker: str) -> Dict:
