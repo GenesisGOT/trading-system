@@ -440,17 +440,13 @@ export default function App() {
 
         <div className="flex items-center gap-2 shrink-0">
           <button onClick={load} className="btn-muted flex items-center gap-1"><RefreshCw size={11} /><span className="hidden sm:inline">Refresh</span></button>
-          <button onClick={handleTrigger} disabled={loading || halted} className="btn-green flex items-center gap-1">
-            {loading ? <RefreshCw size={11} className="animate-spin" /> : <Play size={11} />}
-            <span className="hidden sm:inline">Scan</span>
-          </button>
           {halted
             ? <button onClick={handleResume} className="btn-green flex items-center gap-1"><Play size={11} />Resume</button>
             : <button onClick={handleHalt} className="btn-red flex items-center gap-1"><Square size={11} />Halt</button>
           }
-          {/* Auto-scan countdown */}
+          {/* Auto-scan status — always visible, no manual Scan button needed */}
           {scanStatus && (
-            <div className="hidden lg:flex flex-col items-end gap-0.5">
+            <div className="flex flex-col items-end gap-0.5">
               <span className={clx(
                 'text-xs font-semibold',
                 scanStatus.status === 'scanning' ? 'text-terminal-green animate-pulse' : 'text-terminal-cyan'
@@ -527,7 +523,7 @@ export default function App() {
                       ))}
                     </tbody>
                   </table>
-                  {!decisions.length && <p className="text-terminal-muted text-xs text-center py-6">No decisions yet — trigger a scan</p>}
+                  {!decisions.length && <p className="text-terminal-muted text-xs text-center py-6">No decisions yet — waiting for next scan cycle</p>}
                 </div>
               </div>
             </div>
@@ -683,7 +679,7 @@ export default function App() {
             <div className="flex flex-col gap-1 overflow-y-auto font-mono text-xs" style={{ maxHeight: '70vh' }}>
               {feedEvents.length === 0 && (
                 <div className="text-terminal-muted text-center py-16">
-                  Waiting for scan events — hit <span className="text-terminal-green">Scan</span> to start
+                  Waiting for scan events — auto-scan runs every 5 minutes
                 </div>
               )}
               {feedEvents.map((ev, i) => {
