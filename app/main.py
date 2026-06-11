@@ -10,11 +10,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from pathlib import Path
+import json
 
 from app.config import settings
 from app.database import (
@@ -171,6 +172,38 @@ async def list_decisions(limit: int = 50):
 async def list_executions(limit: int = 50):
     """Return the most recent trade execution records."""
     return get_recent_executions(limit=min(limit, 200))
+
+
+@app.get("/feed")
+async def scan_feed(request: Request):
+    """Server-Sent Events stream — live scan progress for the dashboard."""
+    from app.scan_feed import subscribe, unsubscribe
+
+    q = await subscribe()
+
+    async def event_stream():
+        try:
+            # Send a heartbeat immediately so the connection is confirmed
+            yield "data: {\"type\":\"connected\"}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=20.0)
+                    yield msg
+                except asyncio.TimeoutError:
+                    yield "data: {\"type\":\"heartbeat\"}\n\n"
+        finally:
+            unsubscribe(q)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/research")

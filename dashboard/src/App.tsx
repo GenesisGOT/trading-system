@@ -260,7 +260,25 @@ function PnlChart({ executions }: { executions: any[] }) {
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'positions' | 'decisions' | 'executions' | 'backtest'
+type Tab = 'overview' | 'positions' | 'decisions' | 'executions' | 'backtest' | 'feed'
+
+interface FeedEvent {
+  type: string
+  ts: string
+  run_id?: string
+  ticker?: string
+  asset_type?: string
+  action?: string
+  confidence?: number
+  rating?: string
+  thesis?: string
+  analyst?: string
+  status?: string
+  tickers?: string[]
+  session?: string
+  count?: number
+  error?: string
+}
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('overview')
@@ -275,6 +293,26 @@ export default function App() {
   const [lastUpdate, setLastUpdate] = useState('')
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState('')
+  const [feedEvents, setFeedEvents] = useState<FeedEvent[]>([])
+  const [feedConnected, setFeedConnected] = useState(false)
+  const feedRef = useRef<EventSource | null>(null)
+  const feedEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const BASE = import.meta.env.VITE_API_URL || ''
+    const es = new EventSource(`${BASE}/feed`)
+    feedRef.current = es
+    es.onopen = () => setFeedConnected(true)
+    es.onerror = () => setFeedConnected(false)
+    es.onmessage = (e) => {
+      try {
+        const ev: FeedEvent = JSON.parse(e.data)
+        if (ev.type === 'heartbeat' || ev.type === 'connected') return
+        setFeedEvents(prev => [ev, ...prev].slice(0, 200))
+      } catch {}
+    }
+    return () => { es.close(); setFeedConnected(false) }
+  }, [])
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -330,6 +368,7 @@ export default function App() {
     { id: 'decisions',  label: 'Decisions',  icon: Cpu,      count: decisions.length },
     { id: 'executions', label: 'Executions', icon: Zap,      count: executions.length },
     { id: 'backtest',   label: 'Backtest',   icon: BarChart2 },
+    { id: 'feed',       label: 'Live Feed',  icon: Activity,  count: feedConnected ? undefined : 0 },
   ]
 
   return (
@@ -508,6 +547,68 @@ export default function App() {
 
         {/* BACKTEST */}
         {tab === 'backtest' && <BacktestPanel />}
+
+        {/* LIVE FEED */}
+        {tab === 'feed' && (
+          <div className="card flex flex-col gap-3" style={{ minHeight: '60vh' }}>
+            <div className="flex items-center justify-between">
+              <div className="label flex items-center gap-2 mb-0"><Activity size={11} />Live Scan Feed</div>
+              <div className="flex items-center gap-2">
+                <span className={clx('w-2 h-2 rounded-full', feedConnected ? 'bg-terminal-green animate-pulse' : 'bg-terminal-red')} />
+                <span className="text-xs text-terminal-muted">{feedConnected ? 'Connected' : 'Disconnected'}</span>
+                <button onClick={() => setFeedEvents([])} className="btn-muted text-xs">Clear</button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1 overflow-y-auto font-mono text-xs" style={{ maxHeight: '70vh' }}>
+              {feedEvents.length === 0 && (
+                <div className="text-terminal-muted text-center py-16">
+                  Waiting for scan events — hit <span className="text-terminal-green">Scan</span> to start
+                </div>
+              )}
+              {feedEvents.map((ev, i) => (
+                <div key={i} className={clx(
+                  'flex items-start gap-3 px-3 py-1.5 rounded border-l-2',
+                  ev.type === 'scan_start'    && 'border-terminal-cyan bg-blue-950/20',
+                  ev.type === 'ticker_start'  && 'border-terminal-yellow bg-yellow-950/10',
+                  ev.type === 'decision'      && ev.action === 'BUY'  && 'border-terminal-green bg-green-950/20',
+                  ev.type === 'decision'      && ev.action === 'SELL' && 'border-terminal-red bg-red-950/20',
+                  ev.type === 'decision'      && ev.action === 'HOLD' && 'border-terminal-border bg-terminal-surface',
+                  ev.type === 'scan_complete' && 'border-terminal-green bg-green-950/10',
+                  ev.type === 'analyst'       && 'border-terminal-border bg-transparent',
+                  ev.type === 'error'         && 'border-terminal-red bg-red-950/20',
+                )}>
+                  <span className="text-terminal-muted shrink-0 w-16">{ev.ts}</span>
+                  <span className="shrink-0 w-20">
+                    {ev.type === 'scan_start'    && <span className="text-terminal-cyan">SCAN START</span>}
+                    {ev.type === 'ticker_start'  && <span className="text-yellow-400">▶ {ev.ticker}</span>}
+                    {ev.type === 'analyst'       && <span className="text-terminal-muted">  {ev.ticker}</span>}
+                    {ev.type === 'decision'      && (
+                      <span className={ev.action === 'BUY' ? 'text-terminal-green font-bold' : ev.action === 'SELL' ? 'text-terminal-red font-bold' : 'text-terminal-muted'}>
+                        {ev.action} {ev.ticker}
+                      </span>
+                    )}
+                    {ev.type === 'scan_complete' && <span className="text-terminal-green">✓ DONE</span>}
+                    {ev.type === 'error'         && <span className="text-terminal-red">✗ ERROR</span>}
+                  </span>
+                  <span className="text-terminal-muted flex-1 truncate">
+                    {ev.type === 'scan_start'    && `${ev.tickers?.join(', ')} · ${ev.session}`}
+                    {ev.type === 'ticker_start'  && `${ev.asset_type} · analyzing...`}
+                    {ev.type === 'analyst'       && `${ev.analyst} analyst · ${ev.status}`}
+                    {ev.type === 'decision'      && (
+                      <span>
+                        <span className="text-white">{(ev.confidence! * 100).toFixed(0)}% conf</span>
+                        {' · '}{ev.rating}
+                        {ev.thesis && <span className="text-terminal-muted"> · {ev.thesis}</span>}
+                      </span>
+                    )}
+                    {ev.type === 'scan_complete' && `${ev.count} tickers analyzed`}
+                    {ev.type === 'error'         && <span className="text-terminal-red">{ev.error}</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </main>
 
       {/* ── Footer ── */}

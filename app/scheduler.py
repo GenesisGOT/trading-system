@@ -84,6 +84,11 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
 
     log.info("[%s] Starting LangGraph analysis run_id=%s asset_type=%s", ticker, run_id, asset_type)
     upsert_scan_state(run_id, ticker, asset_type, "started")
+    try:
+        from app.scan_feed import emit_ticker_start
+        emit_ticker_start(run_id, ticker, asset_type)
+    except Exception:
+        pass
 
     analysis_date = settings.analysis_date_override or date.today().isoformat()
 
@@ -97,7 +102,14 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
         notify_error(ticker, str(exc))
         return
 
-    # ── 2. Log decision ───────────────────────────────────────────────────
+    # ── 2. Log decision + emit to live feed ──────────────────────────────
+    try:
+        from app.scan_feed import emit_decision
+        emit_decision(run_id, ticker, result.action, result.confidence,
+                      result.rating, result.investment_thesis)
+    except Exception:
+        pass
+
     decision_id = log_decision(
         run_id=run_id,
         ticker=ticker,
@@ -388,6 +400,11 @@ async def _run_loop(resume: bool = False) -> None:
 
     log.info("Analyzing %d symbols in parallel: %s", len(tradeable), tradeable)
     notify_scan_start([f"{t}({a})" for t, a in tradeable], session=_get_session())
+    try:
+        from app.scan_feed import emit_scan_start
+        emit_scan_start(run_id, [f"{t}({a})" for t, a in tradeable], _get_session())
+    except Exception:
+        pass
 
     async def _safe_process(ticker: str, asset_type: str) -> None:
         try:
@@ -400,6 +417,11 @@ async def _run_loop(resume: bool = False) -> None:
 
     log.info("=== Loop complete run_id=%s ===", run_id)
     log_system_event("loop_complete", f"run_id={run_id}")
+    try:
+        from app.scan_feed import emit_scan_complete
+        emit_scan_complete(run_id, len(tradeable))
+    except Exception:
+        pass
 
 
 # ── Halt / resume ─────────────────────────────────────────────────────────────
