@@ -28,6 +28,7 @@ from app.database import (
     log_decision,
     log_execution,
     log_system_event,
+    save_research,
 )
 from app.notifications import (
     notify_error,
@@ -109,6 +110,16 @@ async def _process_symbol(run_id: str, ticker: str, asset_type: str) -> None:
     for analyst, report in result.analyst_reports.items():
         if report:
             log_analyst_report(decision_id, analyst, report)
+            save_research(
+                ticker=ticker,
+                analyst=analyst,
+                full_report=report,
+                action=result.action,
+                confidence=result.confidence,
+                asset_type=asset_type,
+                signals={"rating": result.rating, "price_target": result.price_target},
+                tags=[result.action, asset_type, analyst],
+            )
 
     # ── 3. Store decision in Mem0 for future cycles ───────────────────────
     try:
@@ -355,15 +366,17 @@ async def _run_loop() -> None:
     if skipped:
         log.info("Skipping %d symbols (session=%s, crypto/prediction still active)", skipped, session)
 
-    log.info("Analyzing %d symbols: %s", len(tradeable), tradeable)
+    log.info("Analyzing %d symbols in parallel: %s", len(tradeable), tradeable)
     notify_scan_start([f"{t}({a})" for t, a in tradeable], session=session)
 
-    for ticker, asset_type in tradeable:
+    async def _safe_process(ticker: str, asset_type: str) -> None:
         try:
             await _process_symbol(run_id, ticker, asset_type)
         except Exception as exc:
             log.error("Unexpected error on %s: %s", ticker, exc, exc_info=True)
             notify_error(ticker, str(exc))
+
+    await asyncio.gather(*[_safe_process(t, a) for t, a in tradeable])
 
     log.info("=== Loop complete run_id=%s ===", run_id)
     log_system_event("loop_complete", f"run_id={run_id}")
@@ -407,11 +420,9 @@ async def _run_crypto_loop() -> None:
     if not crypto_symbols:
         return
     log.info("[crypto-loop] run_id=%s symbols=%s", run_id, crypto_symbols)
-    for ticker, asset_type in crypto_symbols:
-        try:
-            await _process_symbol(run_id, ticker, asset_type)
-        except Exception as exc:
-            log.error("Crypto loop error on %s: %s", ticker, exc)
+    await asyncio.gather(*[
+        _process_symbol(run_id, t, a) for t, a in crypto_symbols
+    ], return_exceptions=True)
 
 
 async def _check_stops_job() -> None:

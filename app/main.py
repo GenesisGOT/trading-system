@@ -170,6 +170,22 @@ async def list_executions(limit: int = 50):
     return get_recent_executions(limit=min(limit, 200))
 
 
+@app.get("/research")
+async def get_research(ticker: str = None, analyst: str = None, limit: int = 50):
+    """Query the analyst research library."""
+    from app.database import get_research_for_ticker, get_research_by_analyst, get_db
+    if ticker:
+        return get_research_for_ticker(ticker.upper(), limit=min(limit, 200))
+    if analyst:
+        return get_research_by_analyst(analyst, limit=min(limit, 200))
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM research_library ORDER BY created_at DESC LIMIT ?",
+            (min(limit, 200),)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 @app.get("/mandate")
 async def get_mandate():
     """Return current mandate configuration."""

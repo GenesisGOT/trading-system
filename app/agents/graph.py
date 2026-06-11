@@ -191,6 +191,13 @@ def node_enrich(state: dict) -> dict:
     memory = recall_ticker(ticker)
     macro_lessons = recall_macro_lessons()
 
+    # Past analyst research from our own research library
+    try:
+        from app.database import get_research_summary
+        past_research = get_research_summary(ticker)
+    except Exception:
+        past_research = ""
+
     vwap = snapshot.get("vwap", 0)
     price = snapshot.get("price", 0)
     session = snapshot.get("market_session", "regular")
@@ -206,7 +213,7 @@ def node_enrich(state: dict) -> dict:
         "news_context": full_news,
         "options_flow_context": flow,
         "macro_context": "\n\n".join(filter(None, [macro, macro_lessons, macro_sentiment, regime_ctx])),
-        "memory_context": memory,
+        "memory_context": "\n\n".join(filter(None, [memory, past_research])),
         "market_snapshot": {**snapshot, "mtf_confluence": mtf_confluence},
         "options_flow_context": uw_flow or state.get("options_flow_context", ""),
     }

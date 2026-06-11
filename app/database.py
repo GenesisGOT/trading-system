@@ -81,6 +81,23 @@ def init_db() -> None:
                 created_at  TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS research_library (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker          TEXT NOT NULL,
+                asset_type      TEXT NOT NULL DEFAULT 'stock',
+                analyst         TEXT NOT NULL,
+                action          TEXT,
+                confidence      REAL,
+                signals         TEXT,
+                full_report     TEXT,
+                outcome         TEXT,
+                outcome_pnl_pct REAL,
+                tags            TEXT,
+                created_at      TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_research_ticker ON research_library(ticker);
+            CREATE INDEX IF NOT EXISTS idx_research_analyst ON research_library(analyst);
+
             CREATE TABLE IF NOT EXISTS open_positions (
                 ticker          TEXT PRIMARY KEY,
                 asset_type      TEXT NOT NULL,
@@ -233,6 +250,73 @@ def get_win_rate_30d() -> float:
         if not row or not row["entries"] or row["entries"] < 3:
             return 0.5
         return min(row["exits"], row["entries"]) / row["entries"]
+
+
+def save_research(
+    ticker: str,
+    analyst: str,
+    full_report: str,
+    action: Optional[str] = None,
+    confidence: Optional[float] = None,
+    signals: Optional[Dict] = None,
+    asset_type: str = "stock",
+    tags: Optional[list] = None,
+) -> int:
+    with get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO research_library
+               (ticker, asset_type, analyst, action, confidence, signals, full_report, tags, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                ticker, asset_type, analyst, action, confidence,
+                json.dumps(signals or {}, default=str),
+                full_report,
+                json.dumps(tags or []),
+                _now(),
+            ),
+        )
+        return cur.lastrowid
+
+
+def update_research_outcome(research_id: int, outcome: str, pnl_pct: Optional[float] = None) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE research_library SET outcome=?, outcome_pnl_pct=? WHERE id=?",
+            (outcome, pnl_pct, research_id),
+        )
+
+
+def get_research_for_ticker(ticker: str, limit: int = 20) -> list:
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM research_library WHERE ticker=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (ticker, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_research_by_analyst(analyst: str, limit: int = 50) -> list:
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT * FROM research_library WHERE analyst=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (analyst, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_research_summary(ticker: str) -> str:
+    """Returns a condensed text summary of past analyst research for use in prompts."""
+    rows = get_research_for_ticker(ticker, limit=5)
+    if not rows:
+        return ""
+    lines = [f"[Past research on {ticker}]"]
+    for r in rows:
+        lines.append(f"- {r['created_at'][:10]} | {r['analyst']} | {r['action']} "
+                     f"conf={r['confidence']:.0%} | {r['full_report'][:200]}"
+                     + (f" → outcome: {r['outcome']}" if r.get('outcome') else ""))
+    return "\n".join(lines)
 
 
 def get_daily_trade_count(ticker: Optional[str] = None) -> int:
