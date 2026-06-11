@@ -77,22 +77,27 @@ def _scan_stocks() -> List[Tuple[str, str]]:
 # ── Crypto ────────────────────────────────────────────────────────────────────
 
 def _scan_crypto() -> List[Tuple[str, str]]:
-    """Pull active crypto from Robinhood."""
+    """Pull active crypto — always returns config symbols, enriches with Robinhood if available."""
     enabled = [s.strip().upper() for s in settings.scanner_crypto_symbols.split(",") if s.strip()]
     if not enabled:
-        return []
+        enabled = ["BTC", "ETH", "SOL"]  # hard fallback
 
+    # Always return config symbols — Robinhood quote check is optional enrichment
     try:
-        rh = _rh()
+        from app.broker.alpaca_connector import get_quote as alpaca_quote
         result = []
         for sym in enabled:
-            quote = rh.get_crypto_quote(sym)
-            if quote and float(quote.get("price") or quote.get("mark_price") or 0) > 0:
-                result.append((sym, "crypto"))
-        if result:
-            return result
-    except Exception as exc:
-        log.warning("Robinhood crypto scanner failed: %s", exc)
+            try:
+                q = alpaca_quote(sym + "USD" if not sym.endswith("USD") else sym)
+                if q:
+                    result.append((sym, "crypto"))
+                    continue
+            except Exception:
+                pass
+            result.append((sym, "crypto"))  # include even if quote fails
+        return result
+    except Exception:
+        pass
 
     return [(s, "crypto") for s in enabled]
 
