@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Secrets — never commit real values
+backend/storage/*.db
+backend/storage/*.sqlite
+backend/storage/.tokens/
+backend/storage/rh_session*
+
+# Node
+node_modules/
+src/dist/
+
+# Environment — keep the template, never commit real creds
+# backend/storage/config.env is safe (comments only) but exclude if you add real values

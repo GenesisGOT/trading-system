@@ -17,3 +17,7 @@ ruff~=0.15
 lxml~=6.1
 apprise~=1.10
 APScheduler~=3.11
+# Robinhood integration
+robin-stocks>=3.0.0
+# Trade execution HTTP client (already in fastapi[standard] but pinned for clarity)
+httpx~=0.28

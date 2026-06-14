@@ -133,6 +133,62 @@ def check_prices_and_notify():
                         log.error("Failed to re-arm alert %s: %s", alert.id, e)
 
 
+def check_allocation_and_notify():
+    """
+    Run every 15 min: take an allocation snapshot, save it to the DB, and
+    if any sleeve drifts > 5% from its target, create pending rebalance actions
+    and notify all users via Apprise.
+
+    Runs synchronously in APScheduler's thread pool.
+    """
+    try:
+        from services.allocation_service import (
+            create_rebalance_actions,
+            recommend_rebalance,
+            save_snapshot,
+            should_rebalance,
+            snapshot,
+        )
+        from sqlmodel import Session, select
+
+        state = snapshot()
+        save_snapshot(state)
+
+        if not should_rebalance(state):
+            return
+
+        actions = recommend_rebalance(state)
+        if not actions:
+            return
+
+        create_rebalance_actions(actions)
+
+        lines = [f"• Move ${a.amount_usd:.0f} from {a.from_sleeve} → {a.to_sleeve}: {a.reason}" for a in actions]
+        body = (
+            f"Allocation drift detected (total equity ${state.total_equity:,.0f}):\n"
+            + "\n".join(lines)
+            + "\n\nOpen the dashboard to approve or dismiss."
+        )
+
+        from models.models import User
+        with Session(get_engine()) as session:
+            users = session.exec(
+                select(User).where(User.apprise_url.is_not(None), User.apprise_url != "")
+            ).all()
+            for user in users:
+                try:
+                    ap = apprise.Apprise()
+                    for url in (user.apprise_url or "").split(","):
+                        if url.strip():
+                            ap.add(url.strip())
+                    ap.notify(title="Portfolio Rebalance Needed", body=body)
+                except Exception as exc:
+                    log.error("Apprise allocation notify failed for %s: %s", user.username, exc)
+
+    except Exception as exc:
+        log.warning("check_allocation_and_notify failed: %s", exc)
+
+
 def notify_earnings_summary():
     """
     Daily 8AM cron (mon–fri): notify all users of the prior trading day's earnings
